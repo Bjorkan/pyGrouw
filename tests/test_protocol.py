@@ -1,0 +1,217 @@
+"""Tests for Grouw BLE framing."""
+from __future__ import annotations
+
+from pygrouw.protocol import (
+    BLUEKEY_MOWER_SETTING_QUERY,
+    BLUEKEY_MULTI_AREA_QUERY,
+    BLUEKEY_QUERY_PIN,
+    DAYE_STATUS_REQUEST,
+    MowerState,
+    daye_ten_to_hex,
+    encode_bluekey_command,
+    encode_bluekey_payload,
+    encode_daye_command,
+    encode_daye_session_start,
+    encode_raw_payload,
+    parse_daye_payload,
+    redact_daye_message,
+    state_from_message,
+)
+
+
+def test_encode_daye_command_returns_captured_status_poll() -> None:
+    """The status poll matches the payload captured from the Daye app."""
+    assert encode_daye_command("status") == DAYE_STATUS_REQUEST
+
+
+def test_encode_daye_session_start_contains_current_time_payload() -> None:
+    """The session start payload uses the captured DYM time-sync shape."""
+    from datetime import datetime
+
+    payload = encode_daye_session_start(datetime(2026, 6, 25, 18, 28))
+
+    assert payload.hex() == "44594d02141a0619121c000000000000000000160601ff0a"
+
+
+def test_encode_raw_payload_accepts_hex_and_command() -> None:
+    """The debug service can send raw hex or a named captured command."""
+    assert encode_raw_payload({"raw_hex": "44 59 4d"}) == b"DYM"
+    assert encode_raw_payload({"command": "dock"}) == encode_daye_command("dock")
+    assert encode_raw_payload({"command": "start"}) == encode_daye_command("start")
+    assert encode_raw_payload({"command": "resume"}).hex().startswith("44594d0100")
+    assert encode_raw_payload({"command": "bluekey_query_pin"}) == encode_bluekey_command(
+        "query_pin"
+    )
+    assert encode_raw_payload({"bluekey": "query_pin"}) == encode_bluekey_command(
+        "query_pin"
+    )
+
+
+def test_daye_ten_to_hex_matches_apk_helper_shape() -> None:
+    """Helper.tenToHex is not a normal decimal-to-byte conversion."""
+    assert daye_ten_to_hex("9") == 9
+    assert daye_ten_to_hex("20") == 36
+
+
+def test_encode_bluekey_command_matches_apk_layout() -> None:
+    """Named BlueKey debug commands use the 48-byte APK layout."""
+    payload = encode_bluekey_command("bluekey_query_info")
+
+    assert len(payload) == 48
+    assert payload[:12] == bytes.fromhex("88b29a002222222222222222")
+    assert payload[19:24] == bytes.fromhex("2c0c02fe14")
+    assert payload[24:] == b"\x00" * 24
+
+
+def test_encode_bluekey_payload_accepts_generic_sub_command() -> None:
+    """The debug encoder can build an APK-shaped BlueKey probe payload."""
+    payload = encode_raw_payload({"bluekey_sub_cmd": "0x32", "bluekey_data": [1, 2]})
+
+    assert len(payload) == 48
+    assert payload[:6] == bytes.fromhex("88b29a320102")
+    assert payload[19:24] == bytes.fromhex("2c0c02fe14")
+
+
+def test_parse_daye_status_notification_maps_observed_fields() -> None:
+    """Parse battery and mode bytes observed in the HCI snoop log."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d8064331b010004000100444100000000160601")
+    )
+
+    assert message == {
+        "raw_hex": "44594d8064331b010004000100444100000000160601",
+        "cmd": 0x80,
+        "trailer": "160601",
+        "battery_level": 0x64,
+        "mode": 0x00,
+        "station": True,
+    }
+
+
+def test_parse_daye_payload_ignores_non_dym_payload() -> None:
+    """Non-Daye notifications are ignored."""
+    assert parse_daye_payload(bytes.fromhex("01020304")) is None
+
+
+def test_parse_daye_payload_does_not_decode_short_status_payload() -> None:
+    """Only the captured 22-byte DYM status shape is decoded as state."""
+    message = parse_daye_payload(bytes.fromhex("44594d806400160601"))
+
+    assert message == {
+        "raw_hex": "44594d806400160601",
+        "cmd": 0x80,
+        "trailer": "160601",
+    }
+
+
+def test_parse_daye_auth_response_extracts_numeric_pin_digits() -> None:
+    """The auth/PIN response exposes the mower PIN as four digit bytes."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d8c0102030400000000000000000000160601")
+    )
+
+    assert message == {
+        "raw_hex": "44594d8c0102030400000000000000000000160601",
+        "cmd": 0x8C,
+        "trailer": "160601",
+        "mower_pin": "1234",
+    }
+
+
+def test_redact_daye_message_hides_pin_and_auth_pin_bytes() -> None:
+    """PIN values must not leak into diagnostics or normal debug logs."""
+    redacted = redact_daye_message(
+        {
+            "raw_hex": "44594d8c0102030400000000000000000000160601",
+            "cmd": 0x8C,
+            "mower_pin": "1234",
+        }
+    )
+
+    assert redacted == {
+        "raw_hex": "44594d8c********00000000000000000000160601",
+        "cmd": 0x8C,
+        "mower_pin": "****",
+    }
+
+
+def test_parse_bluekey_query_pin_extracts_and_redacts_pin() -> None:
+    """BlueKey queryPin responses expose the same PIN byte shape."""
+    message = parse_daye_payload(encode_bluekey_payload(BLUEKEY_QUERY_PIN, [1, 2, 3, 4]))
+
+    assert message is not None
+    assert message["protocol"] == "bluekey"
+    assert message["cmd"] == BLUEKEY_QUERY_PIN
+    assert message["byte5"] == "1"
+    assert message["mower_pin"] == "1234"
+    assert redact_daye_message(message)["raw_hex"].startswith("88b29a18********")
+
+
+def test_parse_bluekey_mower_settings_response() -> None:
+    """Mower settings bytes are mapped from APK page logic."""
+    message = parse_daye_payload(
+        encode_bluekey_payload(
+            BLUEKEY_MOWER_SETTING_QUERY,
+            [1, 0, 1, 0, 2, 5, 0, 1],
+        )
+    )
+
+    assert message is not None
+    assert message["mower_settings"] == {
+        "mow_in_rain": True,
+        "boundary_cut": False,
+        "ultrasound": True,
+        "helix": False,
+        "rain_delay_hour": 2,
+        "rain_delay_minute": 5,
+        "led": True,
+    }
+
+
+def test_parse_bluekey_multi_area_response() -> None:
+    """Multi-area percentages and distance chunks are exposed for validation."""
+    message = parse_daye_payload(
+        encode_bluekey_payload(
+            BLUEKEY_MULTI_AREA_QUERY,
+            [30, 0, 12, 3, 40, 1, 2, 3],
+        )
+    )
+
+    assert message is not None
+    assert message["multi_area"] == {
+        "area2_percentage": 30,
+        "area2_distance": "123",
+        "area3_percentage": 40,
+        "area3_distance": "123",
+    }
+
+
+def test_parse_bluekey_work_time_uses_request_context() -> None:
+    """Working-time parsing needs the request context because byte4 is a mode."""
+    message = parse_daye_payload(
+        encode_bluekey_payload(69, range(1, 16)),
+        bluekey_context="bluekey_work_time",
+    )
+
+    assert message is not None
+    assert message["bluekey_command"] == "work_time"
+    assert message["work_time_mode"] == "0x85"
+    assert message["work_time_delimiter"] == "."
+    assert message["work_time"]["monday"] == {"primary": 1, "secondary": 8}
+
+
+def test_state_from_message_maps_confirmed_dym_fields() -> None:
+    """MowerState only updates fields confirmed from DYM status notifications."""
+    previous = MowerState(address="AA:BB:CC:DD:EE:FF", battery_level=50)
+
+    state = state_from_message(
+        "AA:BB:CC:DD:EE:FF",
+        {"cmd": 0x80, "battery_level": 75, "mode": 0x14, "station": False},
+        previous,
+    )
+
+    assert state.battery_level == 75
+    assert state.mode == 0x14
+    assert state.station is False
+    assert state.last_response_cmd == 0x80
+    assert state.last_seen is not None
