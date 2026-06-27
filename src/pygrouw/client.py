@@ -117,6 +117,28 @@ class GrouwBleMowerClient:
             return await result
         return result
 
+    @classmethod
+    async def from_discovery(
+        cls,
+        address: str,
+        name: str | None = None,
+        pin: str = "",
+        *,
+        timeout: float = 5.0,
+    ) -> GrouwBleMowerClient:
+        """Create a client by scanning for a connectable BLE device."""
+        from .discovery import find_device_by_address, normalize_address
+
+        normalized_address = normalize_address(address)
+        device = await find_device_by_address(normalized_address, timeout=timeout)
+        device_name = name or getattr(device, "name", None) or DEFAULT_NAME
+        return cls(
+            normalized_address,
+            device_name,
+            pin,
+            device=device,
+        )
+
     async def _write_with_log(
         self,
         client: BleakClient,
