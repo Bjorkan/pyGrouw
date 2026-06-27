@@ -1,10 +1,11 @@
 # Reverse Engineered Protocol Notes
 
-Last updated: 2026-06-26.
+Last updated: 2026-06-27.
 
-This directory is the durable protocol memory for the integration. Keep raw
-APKs, decompiler output, manuals, HCI logs, and private captures out of git;
-commit only summarized findings here.
+This directory is the durable protocol memory for `pyGrouw` and the Home
+Assistant integration that consumes it. Keep raw APKs, decompiler output,
+manuals, HCI logs, and private captures out of git; commit only summarized
+findings here.
 
 ## Start Here
 
@@ -44,9 +45,13 @@ Inbound status:     22 bytes, response command 0x80
 Inbound auth/PIN:   response command 0x8c
 ```
 
-The normal integration path uses DYM status/start/resume/pause/dock payloads
-without the DYM session/auth prelude. Hardware validation showed the prelude
-can trigger unwanted beeps, while the unauthenticated DYM status and command
+`pyGrouw` owns DYM payload encoding/parsing and BLE request handling. The Home
+Assistant integration uses `pyGrouw` through Home Assistant's Bluetooth device
+resolution path instead of carrying a separate protocol implementation.
+
+The normal Home Assistant path uses DYM status/start/resume/pause/dock payloads
+without the DYM session/auth prelude. Hardware validation showed the prelude can
+trigger unwanted beeps, while the unauthenticated DYM status and command
 payloads work on the tested mower.
 
 The Daye APK also contains a BlueKey system that constructs 48-value payloads
