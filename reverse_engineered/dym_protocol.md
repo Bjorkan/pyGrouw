@@ -160,6 +160,43 @@ the same response-command position as DYM `0x80`.
 This does not prove DYM byte 12 and BlueKey queryInfo byte13 have identical
 semantics. Keep the mappings separate until paired captures prove otherwise.
 
+## PIN Change — DYM 0x06 / 0x86
+
+Captured on 2026-06-28 from the official Daye Power app.
+
+### Write format (24 bytes)
+
+```text
+byte 0..2    ASCII "DYM"
+byte 3       command: 0x06
+byte 4..7    old PIN, one binary digit per byte
+byte 8..11   new PIN, one binary digit per byte
+byte 12..18  zero padding
+byte 19..23  trailer: 16 06 01 ff 0a
+```
+
+### Response format (22 bytes)
+
+```text
+byte 0..2    ASCII "DYM"
+byte 3       response: 0x86
+byte 4..18   all-zero indicates success
+byte 19..21  trailer: 16 06 01
+```
+
+### Captured test vectors
+
+```
+1234 -> 4321:
+44594d06010203040403020100000000000000160601ff0a
+
+4321 -> 1234:
+44594d06040302010102030400000000000000160601ff0a
+```
+
+The official app follows a successful change with an `0x0c` auth query to verify
+the new PIN against the mower's stored value.
+
 ## Open Questions
 
 - Exact meaning of all DYM status bytes.
@@ -168,3 +205,4 @@ semantics. Keep the mappings separate until paired captures prove otherwise.
 - Whether DYM and BlueKey are selected by firmware generation, auth state,
   native wrapping, or device type.
 - Exact DYM auth response fields beyond PIN-looking bytes.
+- Whether failed PIN changes return `0x86` with non-zero error bytes.

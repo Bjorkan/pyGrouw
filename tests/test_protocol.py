@@ -118,6 +118,47 @@ def test_parse_daye_auth_response_extracts_numeric_pin_digits() -> None:
     }
 
 
+def test_encode_daye_change_pin_matches_captured_payloads() -> None:
+    """PIN change 1234 -> 4321 matches captured HCI payload."""
+    from pygrouw.protocol import encode_daye_change_pin
+
+    assert encode_daye_change_pin("1234", "4321").hex() == (
+        "44594d06010203040403020100000000000000160601ff0a"
+    )
+
+    assert encode_daye_change_pin("4321", "1234").hex() == (
+        "44594d06040302010102030400000000000000160601ff0a"
+    )
+
+    assert encode_daye_change_pin("1234", "1243").hex() == (
+        "44594d06010203040102040300000000000000160601ff0a"
+    )
+
+
+def test_encode_daye_change_pin_validates_length() -> None:
+    """PIN must be exactly 4 decimal digits."""
+    from pygrouw.protocol import encode_daye_change_pin
+
+    import pytest
+
+    with pytest.raises(ValueError, match="PIN must be exactly 4 decimal digits"):
+        encode_daye_change_pin("123", "1234")
+    with pytest.raises(ValueError, match="PIN must be exactly 4 decimal digits"):
+        encode_daye_change_pin("1234", "abc")
+
+
+def test_parse_daye_pin_change_response() -> None:
+    """A 0x86 response with all-zero payload indicates success."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d86000000000000000000000000000000160601")
+    )
+
+    assert message is not None
+    assert message["cmd"] == 0x86
+    assert message["pin_change_ack"] is True
+    assert message["pin_change_success"] is True
+
+
 def test_redact_daye_message_hides_pin_and_auth_pin_bytes() -> None:
     """PIN values must not leak into diagnostics or normal debug logs."""
     redacted = redact_daye_message(
