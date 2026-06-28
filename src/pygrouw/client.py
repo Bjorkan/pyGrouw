@@ -469,14 +469,19 @@ class GrouwBleMowerClient:
             expected_cmd=DAYE_RESPONSE_PIN_CHANGE,
             command_name="change_pin",
         )
+        if not response.get("pin_change_success"):
+            raise GrouwBleError("PIN change was not acknowledged as successful")
+
         auth_response = await self.async_request_daye(
             encode_daye_command("auth_query"),
-            authenticate=True,
+            authenticate=False,
             expected_cmd=DAYE_RESPONSE_PIN_OR_AUTH,
             command_name="change_pin_verify",
         )
-        if auth_response.get("mower_pin") == new_pin:
-            self.pin = new_pin
+        if auth_response.get("mower_pin") != new_pin:
+            raise GrouwBleError("PIN change verification failed")
+
+        self.pin = new_pin
         return response
 
     async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:
