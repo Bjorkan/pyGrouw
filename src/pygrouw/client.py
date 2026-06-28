@@ -460,15 +460,24 @@ class GrouwBleMowerClient:
         new_pin: str,
         old_pin: str | None = None,
     ) -> dict[str, Any]:
-        """Change the mower PIN via DYM command 0x06."""
+        """Change the mower PIN via DYM command 0x06 and verify with auth query."""
         old = old_pin or self.pin
         payload = encode_daye_change_pin(old, new_pin)
-        return await self.async_request_daye(
+        response = await self.async_request_daye(
             payload,
             authenticate=True,
             expected_cmd=DAYE_RESPONSE_PIN_CHANGE,
             command_name="change_pin",
         )
+        auth_response = await self.async_request_daye(
+            encode_daye_command("auth_query"),
+            authenticate=True,
+            expected_cmd=DAYE_RESPONSE_PIN_OR_AUTH,
+            command_name="change_pin_verify",
+        )
+        if auth_response.get("mower_pin") == new_pin:
+            self.pin = new_pin
+        return response
 
     async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a raw debug payload and return the first parsed notification."""

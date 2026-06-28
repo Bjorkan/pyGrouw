@@ -164,8 +164,6 @@ def redact_daye_message(message: dict[str, Any]) -> dict[str, Any]:
     redacted = dict(message)
     if "mower_pin" in redacted:
         redacted["mower_pin"] = "****"
-    if "pin_change_success" in redacted:
-        redacted["pin_change_ack"] = redacted.pop("pin_change_success")
     raw_hex = redacted.get("raw_hex")
     if isinstance(raw_hex, str) and "mower_pin" in message and len(raw_hex) >= 16:
         # Bytes 4..7 are the PIN digits when a response exposes them.
