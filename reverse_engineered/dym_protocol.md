@@ -296,6 +296,81 @@ Set all NEJ / 0h0m:
 
 No DYM notification ACK was observed after `0x09` writes.
 
+## Work-Time Schedule — DYM 0x04 / 0x05 / 0x14 / 0x84 / 0x85
+
+Captured on 2026-06-28 from the official Daye Power app.
+
+### Query format (24 bytes)
+
+```
+44594d14000000000000000000000000000000160601ff0a
+```
+
+Command: `0x14`. The mower responds with two notifications:
+- `0x84`: start times (7 hours + 7 minutes + 1 reserved byte)
+- `0x85`: durations (7 whole-hours + 7 tenths + 1 reserved byte)
+
+### Start-time write format (24 bytes)
+
+```
+byte 0..2    ASCII "DYM"
+byte 3       command: 0x04
+byte 4..10   start hours for Monday..Sunday
+byte 11..17  start minutes for Monday..Sunday
+byte 18      reserved (0x00)
+byte 19..23  trailer: 16 06 01 ff 0a
+```
+
+### Duration write format (24 bytes)
+
+```
+byte 0..2    ASCII "DYM"
+byte 3       command: 0x05
+byte 4..10   duration whole-hour component for Monday..Sunday
+byte 11..17  duration decimal/fraction component for Monday..Sunday
+byte 18      reserved (0x00)
+byte 19..23  trailer: 16 06 01 ff 0a
+```
+
+### Response format
+
+0x84 response:
+```
+byte 0..2    ASCII "DYM"
+byte 3       0x84
+byte 4..10   hours for Monday..Sunday
+byte 11..17  minutes for Monday..Sunday
+byte 18      reserved
+byte 19..21  trailer: 16 06 01
+```
+
+0x85 response:
+```
+byte 0..2    ASCII "DYM"
+byte 3       0x85
+byte 4..10   duration whole-hours for Monday..Sunday
+byte 11..17  duration tenths for Monday..Sunday
+byte 18      reserved
+byte 19..21  trailer: 16 06 01
+```
+
+### Captured test vectors
+
+```
+Query:
+44594d14000000000000000000000000000000160601ff0a
+
+Start times (Mon..Sun: 18:00, 11:13, 11:21, 04:07, 18:00, 10:01, 17:50):
+44594d04120b0b04120a11000d150700013200160601ff0a
+
+Durations (Mon..Sun: 1.0, 11.9, 10.0, 3.0, 4.0, 2.0, 6.0):
+44594d05010b0a030402060009000000000000160601ff0a
+```
+
+The official app writes 0x04 then 0x05 with ~300ms delay between them.
+No notification ACK was observed after the writes; the app may trust the
+ATT-level write response.
+
 ## Open Questions
 
 - Exact meaning of all DYM status bytes.
