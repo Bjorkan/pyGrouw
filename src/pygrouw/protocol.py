@@ -41,6 +41,11 @@ DAYE_RESPONSE_MULTI_AREA = 0x8D
 DAYE_RESPONSE_PIN_OR_AUTH = 0x8C
 
 DAYE_MULTI_AREA_QUERY_PAYLOAD = bytes.fromhex("44594d1d000000000000000000000000000000160601ff0a")
+DAYE_MOWER_SETTINGS_WRITE = 0x09
+DAYE_MOWER_SETTINGS_QUERY = 0x19
+DAYE_RESPONSE_MOWER_SETTINGS = 0x89
+
+DAYE_MOWER_SETTINGS_QUERY_PAYLOAD = bytes.fromhex("44594d19000000000000000000000000000000160601ff0a")
 DAYE_RESPONSE_STATUS = 0x80
 
 BLUEKEY_QUERY_INFO = 0x00
@@ -278,6 +283,41 @@ def encode_daye_multi_area(
     )
 
 
+def encode_daye_mower_settings(
+    mow_in_rain: bool,
+    boundary_cut: bool,
+    helix: bool,
+    rain_delay_hours: int,
+    rain_delay_minutes: int,
+    *,
+    unknown_setting: bool = False,
+) -> bytes:
+    """Build a 24-byte DYM mower settings write payload (command 0x09)."""
+    if not 0 <= rain_delay_hours <= 23:
+        raise ValueError("rain_delay_hours must be between 0 and 23")
+    if not 0 <= rain_delay_minutes <= 59:
+        raise ValueError("rain_delay_minutes must be between 0 and 59")
+
+    return b"".join(
+        (
+            DYM_PREFIX,
+            bytes((DAYE_MOWER_SETTINGS_WRITE,)),
+            bytes(
+                (
+                    int(mow_in_rain),
+                    int(boundary_cut),
+                    int(unknown_setting),
+                    int(helix),
+                    rain_delay_hours,
+                    rain_delay_minutes,
+                )
+            ),
+            b"\x00" * 9,
+            DYM_TRAILER,
+        )
+    )
+
+
 def encode_raw_payload(payload: dict[str, Any]) -> bytes:
     """Encode a raw debug payload for the Daye BLE characteristic."""
     raw_hex = payload.get("raw_hex")
@@ -456,6 +496,16 @@ def parse_daye_payload(
             "area2_distance": distance2,
             "area3_percentage": payload[8],
             "area3_distance": distance3,
+        }
+    elif len(payload) >= 12 and payload[3] == DAYE_RESPONSE_MOWER_SETTINGS:
+        message["mower_settings"] = {
+            "mow_in_rain": payload[4] == 1,
+            "boundary_cut": payload[5] == 1,
+            "unknown_setting": payload[6] == 1,
+            "helix": payload[7] == 1,
+            "rain_delay_hour": payload[8],
+            "rain_delay_minute": payload[9],
+            "led": payload[11] == 1,
         }
     return message
 

@@ -239,6 +239,63 @@ Reset all zero:
 
 No immediate DYM notification ACK was observed after `0x0d` writes.
 
+## Mower Settings — DYM 0x09 / 0x19 / 0x89
+
+Captured on 2026-06-28 from the official Daye Power app.
+
+### Query format (24 bytes)
+
+```
+44594d19000000000000000000000000000000160601ff0a
+```
+
+Command: `0x19`. Response: `0x89`.
+
+### Write format (24 bytes)
+
+```
+byte 0..2    ASCII "DYM"
+byte 3       command: 0x09
+byte 4       mow in rain / Klippa i regn
+byte 5       boundary cut / Gränsklippning
+byte 6       unknown setting (ultrasound or hidden)
+byte 7       helix / Helix set
+byte 8       rain delay hours
+byte 9       rain delay minutes
+byte 10..18  reserved / zero padding
+byte 19..23  trailer: 16 06 01 ff 0a
+```
+
+### Response format (22 bytes)
+
+```
+byte 0..2    ASCII "DYM"
+byte 3       0x89
+byte 4       mow in rain
+byte 5       boundary cut
+byte 6       unknown setting
+byte 7       helix
+byte 8       rain delay hours
+byte 9       rain delay minutes
+byte 10..18  reserved
+byte 19..21  trailer: 16 06 01
+```
+
+### Captured test vectors
+
+```
+Query:
+44594d19000000000000000000000000000000160601ff0a
+
+Set mow_in_rain=JA, boundary_cut=NEJ, helix=JA, delay=4h13m:
+44594d0901000001040d000000000000000000160601ff0a
+
+Set all NEJ / 0h0m:
+44594d09000000000000000000000000000000160601ff0a
+```
+
+No DYM notification ACK was observed after `0x09` writes.
+
 ## Open Questions
 
 - Exact meaning of all DYM status bytes.
