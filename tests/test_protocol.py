@@ -7,6 +7,8 @@ from pygrouw.protocol import (
     BLUEKEY_QUERY_PIN,
     DAYE_RESPONSE_MOWER_SETTINGS,
     DAYE_RESPONSE_MULTI_AREA,
+    DAYE_RESPONSE_WORK_TIME_DURATION,
+    DAYE_RESPONSE_WORK_TIME_START,
     DAYE_STATUS_REQUEST,
     MowerState,
     daye_ten_to_hex,
@@ -16,6 +18,8 @@ from pygrouw.protocol import (
     encode_daye_mower_settings,
     encode_daye_multi_area,
     encode_daye_session_start,
+    encode_daye_work_time_durations,
+    encode_daye_work_time_starts,
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
@@ -278,6 +282,62 @@ def test_parse_daye_mower_settings_response() -> None:
         "rain_delay_minute": 0,
         "led": False,
     }
+
+
+def test_encode_daye_work_time_starts_matches_captured_payload() -> None:
+    """Start-time write matches the captured HCI payload."""
+    payload = encode_daye_work_time_starts(
+        [(18, 0), (11, 13), (11, 21), (4, 7), (18, 0), (10, 1), (17, 50)]
+    )
+    assert payload.hex() == "44594d04120b0b04120a11000d150700013200160601ff0a"
+
+
+def test_encode_daye_work_time_durations_matches_captured_payload() -> None:
+    """Duration write matches the captured HCI payload."""
+    payload = encode_daye_work_time_durations(
+        [(1, 0), (11, 9), (10, 0), (3, 0), (4, 0), (2, 0), (6, 0)]
+    )
+    assert payload.hex() == "44594d05010b0a030402060009000000000000160601ff0a"
+
+
+def test_encode_daye_work_time_rejects_invalid_inputs() -> None:
+    """Work-time encoders validate day count and value ranges."""
+    import pytest
+
+    with pytest.raises(ValueError, match="exactly 7 day"):
+        encode_daye_work_time_starts([(8, 0)] * 6)
+    with pytest.raises(ValueError, match="exactly 7 day"):
+        encode_daye_work_time_durations([(1, 0)] * 6)
+    with pytest.raises(ValueError, match="hour must be between"):
+        encode_daye_work_time_starts([(24, 0)] * 7)
+    with pytest.raises(ValueError, match="duration hour component"):
+        encode_daye_work_time_durations([(24, 0)] * 7)
+
+
+def test_parse_daye_work_time_starts_notification() -> None:
+    """A 0x84 notification is parsed into structured day entries."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d840e0e0e0e0e0e0e0101010101010100160601")
+    )
+
+    assert message is not None
+    assert message["cmd"] == DAYE_RESPONSE_WORK_TIME_START
+    assert len(message["work_time_starts"]) == 7
+    assert message["work_time_starts"][0] == {"day": "monday", "hour": 14, "minute": 1}
+    assert message["work_time_reserved"] == 0x00
+
+
+def test_parse_daye_work_time_durations_notification() -> None:
+    """A 0x85 notification is parsed into structured duration entries."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d85080808080808080000000000000000160601")
+    )
+
+    assert message is not None
+    assert message["cmd"] == DAYE_RESPONSE_WORK_TIME_DURATION
+    assert len(message["work_time_durations"]) == 7
+    assert message["work_time_durations"][0] == {"day": "monday", "hours": 8, "tenths": 0}
+    assert message["work_time_reserved"] == 0x00
 
 
 def test_redact_daye_message_hides_pin_and_auth_pin_bytes() -> None:

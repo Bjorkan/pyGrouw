@@ -37,11 +37,16 @@ from .protocol import (
     DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
     DAYE_RESPONSE_STATUS,
+    DAYE_RESPONSE_WORK_TIME_DURATION,
+    DAYE_RESPONSE_WORK_TIME_START,
+    DAYE_WORK_TIME_QUERY_PAYLOAD,
     encode_daye_change_pin,
     encode_daye_command,
     encode_daye_multi_area,
     encode_daye_mower_settings,
     encode_daye_session_start,
+    encode_daye_work_time_durations,
+    encode_daye_work_time_starts,
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
@@ -691,6 +696,71 @@ class GrouwBleMowerClient:
                     if settings.get(key) != value:
                         raise GrouwBleError("Mower settings verification failed")
             return response
+
+    async def async_get_work_times(self) -> dict[str, Any]:
+        """Query the mower work-time schedule via DYM 0x14, collecting both 0x84 and 0x85."""
+        async with self._request_lock:
+            result = await self._async_request_daye_multi_locked(
+                [
+                    (DAYE_WORK_TIME_QUERY_PAYLOAD, {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION}, 0, "work_time_query", 2),
+                ],
+                authenticate=True,
+            )
+            collected = result[0] if result and isinstance(result[0], list) else []
+            combined: dict[str, Any] = {"work_time_starts": None, "work_time_durations": None}
+            for msg in collected:
+                if "work_time_starts" in msg:
+                    combined["work_time_starts"] = msg["work_time_starts"]
+                if "work_time_durations" in msg:
+                    combined["work_time_durations"] = msg["work_time_durations"]
+            if combined["work_time_starts"] is None or combined["work_time_durations"] is None:
+                raise GrouwBleError("Work-time query response missing start times or durations")
+            return combined
+
+    async def async_set_work_times(
+        self,
+        starts: list[tuple[int, int]],
+        durations: list[tuple[int, int]],
+    ) -> dict[str, Any]:
+        """Write work-time schedule via 0x04 + 0x05, then verify with 0x14 query."""
+        async with self._request_lock:
+            result = await self._async_request_daye_multi_locked(
+                [
+                    (encode_daye_work_time_starts(starts), None, DEFAULT_CHUNK_DELAY, "work_time_starts", 0),
+                    (encode_daye_work_time_durations(durations), None, DEFAULT_CHUNK_DELAY, "work_time_durations", 0),
+                    (DAYE_WORK_TIME_QUERY_PAYLOAD, {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION}, DEFAULT_CHUNK_DELAY, "work_time_verify", 2),
+                ],
+                authenticate=True,
+            )
+            collected = result[2] if len(result) > 2 and isinstance(result[2], list) else []
+            verified_starts = None
+            verified_durations = None
+            for msg in collected:
+                if "work_time_starts" in msg:
+                    verified_starts = msg["work_time_starts"]
+                if "work_time_durations" in msg:
+                    verified_durations = msg["work_time_durations"]
+            if verified_starts is None or verified_durations is None:
+                raise GrouwBleError("Work-time write verification response missing data")
+            days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+            expected_starts = [
+                {"day": day, "hour": hour, "minute": minute}
+                for day, (hour, minute) in zip(days, starts, strict=True)
+            ]
+            expected_durations = [
+                {"day": day, "hours": hours, "tenths": tenths}
+                for day, (hours, tenths) in zip(days, durations, strict=True)
+            ]
+            if verified_starts != expected_starts:
+                raise GrouwBleError("Work-time starts verification failed")
+            if verified_durations != expected_durations:
+                raise GrouwBleError("Work-time durations verification failed")
+            return {
+                "starts_write": result[0],
+                "durations_write": result[1],
+                "work_time_starts": verified_starts,
+                "work_time_durations": verified_durations,
+            }
 
     async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a raw debug payload and return the first parsed notification."""

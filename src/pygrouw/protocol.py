@@ -46,6 +46,14 @@ DAYE_MOWER_SETTINGS_QUERY = 0x19
 DAYE_RESPONSE_MOWER_SETTINGS = 0x89
 
 DAYE_MOWER_SETTINGS_QUERY_PAYLOAD = bytes.fromhex("44594d19000000000000000000000000000000160601ff0a")
+
+DAYE_WORK_TIME_START_WRITE = 0x04
+DAYE_WORK_TIME_DURATION_WRITE = 0x05
+DAYE_WORK_TIME_QUERY = 0x14
+DAYE_RESPONSE_WORK_TIME_START = 0x84
+DAYE_RESPONSE_WORK_TIME_DURATION = 0x85
+
+DAYE_WORK_TIME_QUERY_PAYLOAD = bytes.fromhex("44594d14000000000000000000000000000000160601ff0a")
 DAYE_RESPONSE_STATUS = 0x80
 
 BLUEKEY_QUERY_INFO = 0x00
@@ -318,6 +326,56 @@ def encode_daye_mower_settings(
     )
 
 
+def encode_daye_work_time_starts(starts: list[tuple[int, int]]) -> bytes:
+    """Build a 24-byte DYM work-time start write payload (command 0x04)."""
+    if len(starts) != 7:
+        raise ValueError("exactly 7 day start times are required")
+    hours = []
+    minutes = []
+    for hour, minute in starts:
+        if not 0 <= hour <= 23:
+            raise ValueError("hour must be between 0 and 23")
+        if not 0 <= minute <= 59:
+            raise ValueError("minute must be between 0 and 59")
+        hours.append(hour)
+        minutes.append(minute)
+    return b"".join(
+        (
+            DYM_PREFIX,
+            bytes((DAYE_WORK_TIME_START_WRITE,)),
+            bytes(hours),
+            bytes(minutes),
+            b"\x00",
+            DYM_TRAILER,
+        )
+    )
+
+
+def encode_daye_work_time_durations(durations: list[tuple[int, int]]) -> bytes:
+    """Build a 24-byte DYM work-time duration write payload (command 0x05)."""
+    if len(durations) != 7:
+        raise ValueError("exactly 7 day durations are required")
+    whole_hours = []
+    tenths = []
+    for hour, tenth in durations:
+        if not 0 <= hour <= 23:
+            raise ValueError("duration hour component must be between 0 and 23")
+        if not 0 <= tenth <= 9:
+            raise ValueError("duration tenth component must be between 0 and 9")
+        whole_hours.append(hour)
+        tenths.append(tenth)
+    return b"".join(
+        (
+            DYM_PREFIX,
+            bytes((DAYE_WORK_TIME_DURATION_WRITE,)),
+            bytes(whole_hours),
+            bytes(tenths),
+            b"\x00",
+            DYM_TRAILER,
+        )
+    )
+
+
 def encode_raw_payload(payload: dict[str, Any]) -> bytes:
     """Encode a raw debug payload for the Daye BLE characteristic."""
     raw_hex = payload.get("raw_hex")
@@ -507,6 +565,20 @@ def parse_daye_payload(
             "rain_delay_minute": payload[9],
             "led": payload[11] == 1,
         }
+    elif len(payload) >= 19 and payload[3] == DAYE_RESPONSE_WORK_TIME_START:
+        days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+        message["work_time_starts"] = [
+            {"day": day, "hour": payload[4 + i], "minute": payload[11 + i]}
+            for i, day in enumerate(days)
+        ]
+        message["work_time_reserved"] = payload[18]
+    elif len(payload) >= 19 and payload[3] == DAYE_RESPONSE_WORK_TIME_DURATION:
+        days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+        message["work_time_durations"] = [
+            {"day": day, "hours": payload[4 + i], "tenths": payload[11 + i]}
+            for i, day in enumerate(days)
+        ]
+        message["work_time_reserved"] = payload[18]
     return message
 
 
