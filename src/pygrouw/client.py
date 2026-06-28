@@ -32,12 +32,15 @@ from .protocol import (
     DAYE_CHANGE_PIN,
     DAYE_MULTI_AREA_QUERY_PAYLOAD,
     DAYE_RESPONSE_MULTI_AREA,
+    DAYE_MOWER_SETTINGS_QUERY_PAYLOAD,
+    DAYE_RESPONSE_MOWER_SETTINGS,
     DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
     DAYE_RESPONSE_STATUS,
     encode_daye_change_pin,
     encode_daye_command,
     encode_daye_multi_area,
+    encode_daye_mower_settings,
     encode_daye_session_start,
     encode_raw_payload,
     parse_daye_payload,
@@ -633,6 +636,60 @@ class GrouwBleMowerClient:
                 }
                 if multi != expected:
                     raise GrouwBleError("Multi-area verification failed")
+            return response
+
+    async def async_get_mower_settings(self) -> dict[str, Any]:
+        """Query the mower settings via DYM 0x19."""
+        async with self._request_lock:
+            return await self._async_request_daye_locked(
+                DAYE_MOWER_SETTINGS_QUERY_PAYLOAD,
+                authenticate=True,
+                expected_cmd=DAYE_RESPONSE_MOWER_SETTINGS,
+                command_name="mower_settings_query",
+            )
+
+    async def async_set_mower_settings(
+        self,
+        *,
+        mow_in_rain: bool,
+        boundary_cut: bool,
+        helix: bool,
+        rain_delay_hours: int,
+        rain_delay_minutes: int,
+        unknown_setting: bool = False,
+    ) -> dict[str, Any]:
+        """Write mower settings via DYM 0x09 and verify with a follow-up query."""
+        from .exceptions import GrouwBleError
+
+        async with self._request_lock:
+            result = await self._async_request_daye_multi_locked(
+                [
+                    (encode_daye_mower_settings(
+                        mow_in_rain=mow_in_rain,
+                        boundary_cut=boundary_cut,
+                        helix=helix,
+                        rain_delay_hours=rain_delay_hours,
+                        rain_delay_minutes=rain_delay_minutes,
+                        unknown_setting=unknown_setting,
+                    ), None, DEFAULT_CHUNK_DELAY, "mower_settings_write", 0),
+                    (DAYE_MOWER_SETTINGS_QUERY_PAYLOAD, DAYE_RESPONSE_MOWER_SETTINGS, DEFAULT_CHUNK_DELAY, "mower_settings_verify", 1),
+                ],
+                authenticate=True,
+            )
+            response = result[1]
+            if isinstance(response, dict):
+                settings = response.get("mower_settings", {})
+                expected = {
+                    "mow_in_rain": mow_in_rain,
+                    "boundary_cut": boundary_cut,
+                    "unknown_setting": unknown_setting,
+                    "helix": helix,
+                    "rain_delay_hour": rain_delay_hours,
+                    "rain_delay_minute": rain_delay_minutes,
+                }
+                for key, value in expected.items():
+                    if settings.get(key) != value:
+                        raise GrouwBleError("Mower settings verification failed")
             return response
 
     async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:

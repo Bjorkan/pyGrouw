@@ -5,6 +5,7 @@ from pygrouw.protocol import (
     BLUEKEY_MOWER_SETTING_QUERY,
     BLUEKEY_MULTI_AREA_QUERY,
     BLUEKEY_QUERY_PIN,
+    DAYE_RESPONSE_MOWER_SETTINGS,
     DAYE_RESPONSE_MULTI_AREA,
     DAYE_STATUS_REQUEST,
     MowerState,
@@ -12,6 +13,7 @@ from pygrouw.protocol import (
     encode_bluekey_command,
     encode_bluekey_payload,
     encode_daye_command,
+    encode_daye_mower_settings,
     encode_daye_multi_area,
     encode_daye_session_start,
     encode_raw_payload,
@@ -208,6 +210,73 @@ def test_parse_daye_multi_area_response_non_zero_distance() -> None:
         "area2_distance": 101,
         "area3_percentage": 16,
         "area3_distance": 74,
+    }
+
+
+def test_encode_daye_mower_settings_matches_captured_payloads() -> None:
+    """Mower settings writes match captured HCI payloads."""
+    payload = encode_daye_mower_settings(
+        mow_in_rain=True,
+        boundary_cut=False,
+        helix=True,
+        rain_delay_hours=4,
+        rain_delay_minutes=13,
+    )
+    assert payload.hex() == "44594d0901000001040d000000000000000000160601ff0a"
+
+    payload = encode_daye_mower_settings(
+        mow_in_rain=False,
+        boundary_cut=False,
+        helix=False,
+        rain_delay_hours=0,
+        rain_delay_minutes=0,
+    )
+    assert payload.hex() == "44594d09000000000000000000000000000000160601ff0a"
+
+    payload = encode_daye_mower_settings(
+        mow_in_rain=True,
+        boundary_cut=True,
+        helix=True,
+        rain_delay_hours=4,
+        rain_delay_minutes=13,
+        unknown_setting=True,
+    )
+    assert payload[6] == 0x01
+    assert payload.hex() == "44594d0901010101040d000000000000000000160601ff0a"
+
+
+def test_encode_daye_mower_settings_validates_ranges() -> None:
+    """Mower settings encoder validates rain delay ranges."""
+    import pytest
+
+    with pytest.raises(ValueError, match="rain_delay_hours"):
+        encode_daye_mower_settings(
+            mow_in_rain=False, boundary_cut=False, helix=False,
+            rain_delay_hours=24, rain_delay_minutes=0,
+        )
+    with pytest.raises(ValueError, match="rain_delay_minutes"):
+        encode_daye_mower_settings(
+            mow_in_rain=False, boundary_cut=False, helix=False,
+            rain_delay_hours=0, rain_delay_minutes=60,
+        )
+
+
+def test_parse_daye_mower_settings_response() -> None:
+    """A 0x89 response is parsed into structured settings fields."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d89000100000000000000000000000000160601")
+    )
+
+    assert message is not None
+    assert message["cmd"] == DAYE_RESPONSE_MOWER_SETTINGS
+    assert message["mower_settings"] == {
+        "mow_in_rain": False,
+        "boundary_cut": True,
+        "unknown_setting": False,
+        "helix": False,
+        "rain_delay_hour": 0,
+        "rain_delay_minute": 0,
+        "led": False,
     }
 
 
