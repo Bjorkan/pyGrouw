@@ -35,7 +35,12 @@ DAYE_AUTH_QUERY = bytes.fromhex("44594d0c000000000000000000000000000000160601ff0
 
 DAYE_CHANGE_PIN = 0x06
 DAYE_RESPONSE_PIN_CHANGE = 0x86
+DAYE_MULTI_AREA_WRITE = 0x0D
+DAYE_MULTI_AREA_QUERY = 0x1D
+DAYE_RESPONSE_MULTI_AREA = 0x8D
 DAYE_RESPONSE_PIN_OR_AUTH = 0x8C
+
+DAYE_MULTI_AREA_QUERY_PAYLOAD = bytes.fromhex("44594d1d000000000000000000000000000000160601ff0a")
 DAYE_RESPONSE_STATUS = 0x80
 
 BLUEKEY_QUERY_INFO = 0x00
@@ -237,6 +242,42 @@ def encode_daye_change_pin(old_pin: str, new_pin: str) -> bytes:
     )
 
 
+def encode_daye_multi_area(
+    area2_percentage: int,
+    area2_distance: int,
+    area3_percentage: int,
+    area3_distance: int,
+) -> bytes:
+    """Build a 24-byte DYM multi-area write payload (command 0x0d)."""
+    if not 0 <= area2_percentage <= 100:
+        raise ValueError("area2_percentage must be between 0 and 100")
+    if not 0 <= area3_percentage <= 100:
+        raise ValueError("area3_percentage must be between 0 and 100")
+    if not 0 <= area2_distance <= 999:
+        raise ValueError("area2_distance must be between 0 and 999")
+    if not 0 <= area3_distance <= 999:
+        raise ValueError("area3_distance must be between 0 and 999")
+
+    def _decimal_chunks(value: int) -> tuple[int, int, int]:
+        hundreds = value // 100
+        tens = (value // 10) % 10
+        ones = value % 10
+        return (hundreds, tens, ones)
+
+    return b"".join(
+        (
+            DYM_PREFIX,
+            bytes((DAYE_MULTI_AREA_WRITE,)),
+            bytes((area2_percentage,)),
+            bytes(_decimal_chunks(area2_distance)),
+            bytes((area3_percentage,)),
+            bytes(_decimal_chunks(area3_distance)),
+            b"\x00" * 7,
+            DYM_TRAILER,
+        )
+    )
+
+
 def encode_raw_payload(payload: dict[str, Any]) -> bytes:
     """Encode a raw debug payload for the Daye BLE characteristic."""
     raw_hex = payload.get("raw_hex")
@@ -407,6 +448,15 @@ def parse_daye_payload(
     elif len(payload) >= 8 and payload[3] == DAYE_RESPONSE_PIN_CHANGE:
         message["pin_change_ack"] = True
         message["pin_change_success"] = payload[4:19] == b"\x00" * 15
+    elif len(payload) >= 12 and payload[3] == DAYE_RESPONSE_MULTI_AREA:
+        distance2 = payload[5] * 100 + payload[6] * 10 + payload[7]
+        distance3 = payload[9] * 100 + payload[10] * 10 + payload[11]
+        message["multi_area"] = {
+            "area2_percentage": payload[4],
+            "area2_distance": distance2,
+            "area3_percentage": payload[8],
+            "area3_distance": distance3,
+        }
     return message
 
 

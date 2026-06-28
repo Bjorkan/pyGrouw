@@ -5,12 +5,14 @@ from pygrouw.protocol import (
     BLUEKEY_MOWER_SETTING_QUERY,
     BLUEKEY_MULTI_AREA_QUERY,
     BLUEKEY_QUERY_PIN,
+    DAYE_RESPONSE_MULTI_AREA,
     DAYE_STATUS_REQUEST,
     MowerState,
     daye_ten_to_hex,
     encode_bluekey_command,
     encode_bluekey_payload,
     encode_daye_command,
+    encode_daye_multi_area,
     encode_daye_session_start,
     encode_raw_payload,
     parse_daye_payload,
@@ -157,6 +159,56 @@ def test_parse_daye_pin_change_response() -> None:
     assert message["cmd"] == 0x86
     assert message["pin_change_ack"] is True
     assert message["pin_change_success"] is True
+
+
+def test_encode_daye_multi_area_matches_captured_payloads() -> None:
+    """Multi-area writes match captured HCI payloads."""
+    payload = encode_daye_multi_area(5, 12, 16, 74)
+    assert payload.hex() == "44594d0d050001021000070400000000000000160601ff0a"
+
+    payload = encode_daye_multi_area(0, 0, 0, 0)
+    assert payload.hex() == "44594d0d000000000000000000000000000000160601ff0a"
+
+
+def test_encode_daye_multi_area_validates_ranges() -> None:
+    """Multi-area encoder validates percentage and distance ranges."""
+    import pytest
+
+    with pytest.raises(ValueError, match="area2_percentage"):
+        encode_daye_multi_area(101, 0, 0, 0)
+    with pytest.raises(ValueError, match="area2_distance"):
+        encode_daye_multi_area(0, 1000, 0, 0)
+
+
+def test_parse_daye_multi_area_response() -> None:
+    """A 0x8d response is parsed into percentage and distance fields."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d8d000000000000000000000000000000160601")
+    )
+
+    assert message is not None
+    assert message["cmd"] == DAYE_RESPONSE_MULTI_AREA
+    assert message["multi_area"] == {
+        "area2_percentage": 0,
+        "area2_distance": 0,
+        "area3_percentage": 0,
+        "area3_distance": 0,
+    }
+
+
+def test_parse_daye_multi_area_response_non_zero_distance() -> None:
+    """Non-zero distances are correctly decoded from decimal-chunk bytes."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d8d0501000110000704160601")
+    )
+
+    assert message is not None
+    assert message["multi_area"] == {
+        "area2_percentage": 5,
+        "area2_distance": 101,
+        "area3_percentage": 16,
+        "area3_distance": 74,
+    }
 
 
 def test_redact_daye_message_hides_pin_and_auth_pin_bytes() -> None:
