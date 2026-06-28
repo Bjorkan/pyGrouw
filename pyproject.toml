@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pygrouw"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python BLE library for Grouw robotic mowers using the Daye Power protocol"
 readme = "README.md"
 requires-python = ">=3.11"
