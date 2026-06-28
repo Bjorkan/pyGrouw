@@ -197,6 +197,48 @@ byte 19..21  trailer: 16 06 01
 The official app follows a successful change with an `0x0c` auth query to verify
 the new PIN against the mower's stored value.
 
+## Multi-Area Settings — DYM 0x0d / 0x1d / 0x8d
+
+Captured on 2026-06-28 from the official Daye Power app.
+
+### Query format (24 bytes)
+
+```
+44594d1d000000000000000000000000000000160601ff0a
+```
+
+Command: `0x1d`. Response: `0x8d`.
+
+### Write format (24 bytes)
+
+```
+byte 0..2    ASCII "DYM"
+byte 3       command: 0x0d
+byte 4       Area2_Per percentage
+byte 5..7    Area2_Dis as three decimal chunk bytes
+byte 8       Area3_Per percentage
+byte 9..11   Area3_Dis as three decimal chunk bytes
+byte 12..18  reserved / zero padding
+byte 19..23  trailer: 16 06 01 ff 0a
+```
+
+Distance values use decimal chunk encoding: `00 01 02` = 12 m, `00 07 04` = 74 m.
+
+### Captured test vectors
+
+```
+Query:
+44594d1d000000000000000000000000000000160601ff0a
+
+Set Area2=5%/12m, Area3=16%/74m:
+44594d0d050001021000070400000000000000160601ff0a
+
+Reset all zero:
+44594d0d000000000000000000000000000000160601ff0a
+```
+
+No immediate DYM notification ACK was observed after `0x0d` writes.
+
 ## Open Questions
 
 - Exact meaning of all DYM status bytes.

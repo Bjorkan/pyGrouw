@@ -30,11 +30,14 @@ from .exceptions import (
 from .protocol import (
     BLUEKEY_PREFIX,
     DAYE_CHANGE_PIN,
+    DAYE_MULTI_AREA_QUERY_PAYLOAD,
+    DAYE_RESPONSE_MULTI_AREA,
     DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
     DAYE_RESPONSE_STATUS,
     encode_daye_change_pin,
     encode_daye_command,
+    encode_daye_multi_area,
     encode_daye_session_start,
     encode_raw_payload,
     parse_daye_payload,
@@ -198,11 +201,11 @@ class GrouwBleMowerClient:
     async def _wait_for_response(
         self,
         queue: asyncio.Queue[dict[str, Any]],
-        expected_cmd: int | None,
+        expected_cmd: int | set[int] | None,
         timeout: float,
         phase: str,
     ) -> dict[str, Any]:
-        """Wait for a parsed notification with the expected command byte."""
+        """Wait for a parsed notification matching the expected command(s)."""
         deadline = asyncio.get_running_loop().time() + timeout
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
@@ -226,7 +229,17 @@ class GrouwBleMowerClient:
                 ) from err
 
             cmd = message.get("cmd")
-            if expected_cmd is None or cmd == expected_cmd:
+            if expected_cmd is None:
+                return message
+            if isinstance(expected_cmd, set):
+                if cmd in expected_cmd:
+                    _LOGGER.debug(
+                        "[%s tx=%s] selected %s response cmd=%s raw=%s",
+                        self.address, self._tx_id, phase, cmd,
+                        redact_daye_message(message).get("raw_hex", "?")
+                    )
+                    return message
+            elif cmd == expected_cmd:
                 _LOGGER.debug(
                     "[%s tx=%s] selected %s response cmd=%s raw=%s",
                     self.address, self._tx_id, phase, cmd,
@@ -268,7 +281,8 @@ class GrouwBleMowerClient:
         expected_cmd: int | None = DAYE_RESPONSE_STATUS,
         timeout: float = DEFAULT_BLE_TIMEOUT,
         command_name: str = "raw",
-    ) -> dict[str, Any]:
+        write_only: bool = False,
+    ) -> dict[str, Any] | None:
         """Serialize and send a Daye DYM payload."""
         async with self._request_lock:
             return await self._async_request_daye_locked(
@@ -278,6 +292,7 @@ class GrouwBleMowerClient:
                 expected_cmd=expected_cmd,
                 timeout=timeout,
                 command_name=command_name,
+                write_only=write_only,
             )
 
     async def _async_request_daye_locked(
@@ -288,7 +303,8 @@ class GrouwBleMowerClient:
         expected_cmd: int | None = DAYE_RESPONSE_STATUS,
         timeout: float = DEFAULT_BLE_TIMEOUT,
         command_name: str = "raw",
-    ) -> dict[str, Any]:
+        write_only: bool = False,
+    ) -> dict[str, Any] | None:
         """Send a Daye DYM payload and wait for the first parsed notification."""
         self._tx_counter += 1
         self._tx_id = self._tx_counter
@@ -403,6 +419,9 @@ class GrouwBleMowerClient:
                     client, encode_daye_command("status"), "follow_up_status"
                 )
 
+            if write_only:
+                return None
+
             return await self._wait_for_response(
                 queue,
                 expected_cmd,
@@ -483,6 +502,138 @@ class GrouwBleMowerClient:
 
         self.pin = new_pin
         return response
+
+    async def _async_request_daye_multi_locked(
+        self,
+        steps: list[tuple[bytes, int | None | set[int], float, str, int]],
+        authenticate: bool = True,
+        timeout: float = DEFAULT_BLE_TIMEOUT,
+    ) -> list[Any]:
+        """Execute multiple DYM payload writes in a single BLE session.
+
+        Each step is (payload, expected_cmd, delay, command_name, collect_count).
+        expected_cmd can be int, set[int], or None.
+        collect_count=0 means write-only (no response expected).
+        collect_count=1 means wait for one response matching expected_cmd.
+        collect_count=N means wait for N responses (each must match expected_cmd
+        when it is an int/set, or accept any cmd when None).
+        """
+        self._tx_counter += 1
+        self._tx_id = self._tx_counter
+
+        ble_device = await self._resolve_device()
+        if ble_device is None:
+            raise GrouwBleDeviceNotFound(
+                f"No connectable Bluetooth device found for {self.address}"
+            )
+
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def _notification_handler(_sender: int | str, data: bytearray) -> None:
+            message = parse_daye_payload(bytes(data))
+            if message is not None:
+                loop.call_soon_threadsafe(queue.put_nowait, message)
+
+        client: BleakClient | None = None
+        notify_started = False
+        responses: list[Any] = []
+        try:
+            client = await establish_connection(
+                BleakClient, ble_device, self.name, max_attempts=3, timeout=timeout,
+            )
+            await self._request_mtu_with_log(client)
+            await client.start_notify(READ_CHARACTERISTIC_UUID, _notification_handler)
+            notify_started = True
+
+            if authenticate:
+                await self._write_with_log(client, encode_daye_session_start(), "session_start")
+                await asyncio.sleep(DEFAULT_CHUNK_DELAY)
+                await self._write_with_log(client, encode_daye_command("auth_query"), "auth_query")
+                auth_message = await self._wait_for_response(
+                    queue, DAYE_RESPONSE_PIN_OR_AUTH, timeout, "auth",
+                )
+                self._verify_auth_response(auth_message)
+                _drain_queue(queue)
+
+            for payload, expected_cmd, delay, command_name, collect_count in steps:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                await self._write_with_log(client, payload, command_name)
+                if collect_count > 0:
+                    collected: list[dict[str, Any]] = []
+                    for _ in range(collect_count):
+                        response = await self._wait_for_response(
+                            queue, expected_cmd, timeout, command_name,
+                        )
+                        collected.append(response)
+                    responses.append(collected if collect_count > 1 else collected[0])
+                else:
+                    responses.append(None)
+
+            return responses
+
+        except (GrouwBleAuthenticationError, GrouwBleConnectionError, GrouwBleGattError, GrouwBleTimeout):
+            raise
+        except BLE_BACKEND_EXCEPTIONS as err:
+            raise GrouwBleError(f"Unexpected BLE error on {self.address}: {err}") from err
+        finally:
+            if client is not None:
+                if notify_started:
+                    try:
+                        await client.stop_notify(READ_CHARACTERISTIC_UUID)
+                    except Exception:
+                        pass
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+
+    async def async_get_multi_area(self) -> dict[str, Any]:
+        """Query the mower multi-area settings via DYM 0x1d."""
+        async with self._request_lock:
+            return await self._async_request_daye_locked(
+                DAYE_MULTI_AREA_QUERY_PAYLOAD,
+                authenticate=True,
+                expected_cmd=DAYE_RESPONSE_MULTI_AREA,
+                command_name="multi_area_query",
+            )
+
+    async def async_set_multi_area(
+        self,
+        area2_percentage: int,
+        area2_distance: int,
+        area3_percentage: int,
+        area3_distance: int,
+    ) -> dict[str, Any]:
+        """Write multi-area settings, verify with query, and return query response."""
+        from .exceptions import GrouwBleError
+
+        async with self._request_lock:
+            result = await self._async_request_daye_multi_locked(
+                [
+                    (encode_daye_multi_area(
+                        area2_percentage=area2_percentage,
+                        area2_distance=area2_distance,
+                        area3_percentage=area3_percentage,
+                        area3_distance=area3_distance,
+                    ), None, DEFAULT_CHUNK_DELAY, "multi_area_write", 0),
+                    (DAYE_MULTI_AREA_QUERY_PAYLOAD, DAYE_RESPONSE_MULTI_AREA, DEFAULT_CHUNK_DELAY, "multi_area_verify", 1),
+                ],
+                authenticate=True,
+            )
+            response = result[1]
+            if isinstance(response, dict):
+                multi = response.get("multi_area", {})
+                expected = {
+                    "area2_percentage": area2_percentage,
+                    "area2_distance": area2_distance,
+                    "area3_percentage": area3_percentage,
+                    "area3_distance": area3_distance,
+                }
+                if multi != expected:
+                    raise GrouwBleError("Multi-area verification failed")
+            return response
 
     async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a raw debug payload and return the first parsed notification."""

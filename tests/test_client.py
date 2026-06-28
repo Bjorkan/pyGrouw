@@ -182,7 +182,8 @@ def test_client_requests_are_serialized() -> None:
             expected_cmd: int | None = None,
             timeout: float = 0,
             command_name: str = "raw",
-        ) -> dict[str, int]:
+            write_only: bool = False,
+        ) -> dict[str, int] | None:
             Tracker.active += 1
             Tracker.max_active = max(Tracker.max_active, Tracker.active)
             await asyncio.sleep(0)
