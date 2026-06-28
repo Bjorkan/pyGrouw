@@ -33,6 +33,8 @@ DAYE_PAUSE_MOWING = bytes.fromhex(
 DAYE_DOCK = bytes.fromhex("44594d01030000000000000000000000000000160601ff0a")
 DAYE_AUTH_QUERY = bytes.fromhex("44594d0c000000000000000000000000000000160601ff0a")
 
+DAYE_CHANGE_PIN = 0x06
+DAYE_RESPONSE_PIN_CHANGE = 0x86
 DAYE_RESPONSE_PIN_OR_AUTH = 0x8C
 DAYE_RESPONSE_STATUS = 0x80
 
@@ -162,10 +164,15 @@ def redact_daye_message(message: dict[str, Any]) -> dict[str, Any]:
     redacted = dict(message)
     if "mower_pin" in redacted:
         redacted["mower_pin"] = "****"
+    if "pin_change_success" in redacted:
+        redacted["pin_change_ack"] = redacted.pop("pin_change_success")
     raw_hex = redacted.get("raw_hex")
     if isinstance(raw_hex, str) and "mower_pin" in message and len(raw_hex) >= 16:
         # Bytes 4..7 are the PIN digits when a response exposes them.
         redacted["raw_hex"] = f"{raw_hex[:8]}********{raw_hex[16:]}"
+    if isinstance(raw_hex, str) and message.get("cmd") == DAYE_CHANGE_PIN and len(raw_hex) >= 24:
+        # Bytes 4..11 contain old and new PIN digits.
+        redacted["raw_hex"] = f"{raw_hex[:8]}****************{raw_hex[24:]}"
     return redacted
 
 
@@ -209,6 +216,27 @@ def encode_daye_command(command: str) -> bytes:
     if command == "session_start":
         return encode_daye_session_start()
     raise ValueError(f"Unsupported Daye command: {command}")
+
+
+def _encode_daye_pin_digits(pin: str) -> bytes:
+    """Encode a 4-digit PIN string into four binary digit bytes."""
+    if len(pin) != 4 or not pin.isdecimal():
+        raise ValueError("PIN must be exactly 4 decimal digits")
+    return bytes(int(ch) for ch in pin)
+
+
+def encode_daye_change_pin(old_pin: str, new_pin: str) -> bytes:
+    """Build a 24-byte DYM PIN change payload (command 0x06)."""
+    return b"".join(
+        (
+            DYM_PREFIX,
+            bytes((DAYE_CHANGE_PIN,)),
+            _encode_daye_pin_digits(old_pin),
+            _encode_daye_pin_digits(new_pin),
+            b"\x00" * 7,
+            DYM_TRAILER,
+        )
+    )
 
 
 def encode_raw_payload(payload: dict[str, Any]) -> bytes:
@@ -378,6 +406,9 @@ def parse_daye_payload(
         pin_bytes = payload[4:8]
         if _looks_like_pin_digits(pin_bytes):
             message["mower_pin"] = "".join(str(byte) for byte in pin_bytes)
+    elif len(payload) >= 8 and payload[3] == DAYE_RESPONSE_PIN_CHANGE:
+        message["pin_change_ack"] = True
+        message["pin_change_success"] = payload[4:19] == b"\x00" * 15
     return message
 
 

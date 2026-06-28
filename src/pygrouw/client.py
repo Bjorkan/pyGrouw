@@ -29,8 +29,11 @@ from .exceptions import (
 )
 from .protocol import (
     BLUEKEY_PREFIX,
+    DAYE_CHANGE_PIN,
+    DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
     DAYE_RESPONSE_STATUS,
+    encode_daye_change_pin,
     encode_daye_command,
     encode_daye_session_start,
     encode_raw_payload,
@@ -450,6 +453,21 @@ class GrouwBleMowerClient:
             authenticate=False,
             follow_up_status=True,
             command_name=command,
+        )
+
+    async def async_change_pin(
+        self,
+        new_pin: str,
+        old_pin: str | None = None,
+    ) -> dict[str, Any]:
+        """Change the mower PIN via DYM command 0x06."""
+        old = old_pin or self.pin
+        payload = encode_daye_change_pin(old, new_pin)
+        return await self.async_request_daye(
+            payload,
+            authenticate=True,
+            expected_cmd=DAYE_RESPONSE_PIN_CHANGE,
+            command_name="change_pin",
         )
 
     async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:
