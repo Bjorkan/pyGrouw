@@ -260,9 +260,9 @@ class GrouwBleMowerClient:
                 self.address, self._tx_id, cmd, phase, expected_cmd
             )
 
-    def _verify_auth_response(self, message: dict[str, Any]) -> None:
-        """Verify the configured PIN against the mower auth/PIN response."""
-        if not self.pin:
+    def _verify_auth_response_pin(self, message: dict[str, Any], pin: str) -> None:
+        """Verify a PIN against the mower auth/PIN response."""
+        if not pin:
             raise GrouwBleAuthenticationError("A 4-digit mower PIN is required")
 
         mower_pin = message.get("mower_pin")
@@ -271,7 +271,7 @@ class GrouwBleMowerClient:
                 "Mower auth response did not include PIN data; cannot verify configured PIN"
             )
 
-        if str(mower_pin) != self.pin:
+        if str(mower_pin) != pin:
             raise GrouwBleAuthenticationError(
                 "Configured mower PIN does not match the mower auth response"
             )
@@ -280,6 +280,10 @@ class GrouwBleMowerClient:
             "[%s tx=%s] configured PIN verified against mower auth response",
             self.address, self._tx_id
         )
+
+    def _verify_auth_response(self, message: dict[str, Any]) -> None:
+        """Verify the configured PIN against the mower auth/PIN response."""
+        self._verify_auth_response_pin(message, self.pin)
 
     async def async_request_daye(
         self,
@@ -489,23 +493,34 @@ class GrouwBleMowerClient:
     ) -> dict[str, Any]:
         """Change the mower PIN via DYM command 0x06 and verify with auth query."""
         old = old_pin or self.pin
-        payload = encode_daye_change_pin(old, new_pin)
-        response = await self.async_request_daye(
-            payload,
-            authenticate=True,
-            expected_cmd=DAYE_RESPONSE_PIN_CHANGE,
-            command_name="change_pin",
-        )
+        async with self._request_lock:
+            result = await self._async_request_daye_multi_locked(
+                [
+                    (
+                        encode_daye_change_pin(old, new_pin),
+                        DAYE_RESPONSE_PIN_CHANGE,
+                        DEFAULT_CHUNK_DELAY,
+                        "change_pin",
+                        1,
+                    ),
+                    (
+                        encode_daye_command("auth_query"),
+                        DAYE_RESPONSE_PIN_OR_AUTH,
+                        DEFAULT_CHUNK_DELAY,
+                        "change_pin_verify",
+                        1,
+                    ),
+                ],
+                authenticate=True,
+                auth_pin=old,
+            )
+
+        response = result[0]
         if not response.get("pin_change_success"):
             raise GrouwBleError("PIN change was not acknowledged as successful")
 
-        auth_response = await self.async_request_daye(
-            encode_daye_command("auth_query"),
-            authenticate=False,
-            expected_cmd=DAYE_RESPONSE_PIN_OR_AUTH,
-            command_name="change_pin_verify",
-        )
-        if auth_response.get("mower_pin") != new_pin:
+        verify_response = result[1]
+        if verify_response.get("mower_pin") != new_pin:
             raise GrouwBleError("PIN change verification failed")
 
         self.pin = new_pin
@@ -515,6 +530,7 @@ class GrouwBleMowerClient:
         self,
         steps: list[tuple[bytes, int | None | set[int], float, str, int]],
         authenticate: bool = True,
+        auth_pin: str | None = None,
         timeout: float = DEFAULT_BLE_TIMEOUT,
     ) -> list[Any]:
         """Execute multiple DYM payload writes in a single BLE session.
@@ -561,7 +577,7 @@ class GrouwBleMowerClient:
                 auth_message = await self._wait_for_response(
                     queue, DAYE_RESPONSE_PIN_OR_AUTH, timeout, "auth",
                 )
-                self._verify_auth_response(auth_message)
+                self._verify_auth_response_pin(auth_message, auth_pin or self.pin)
                 _drain_queue(queue)
 
             for payload, expected_cmd, delay, command_name, collect_count in steps:
