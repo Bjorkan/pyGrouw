@@ -268,16 +268,16 @@ class GrouwBleMowerClient:
         mower_pin = message.get("mower_pin")
         if mower_pin is None:
             raise GrouwBleError(
-                "Mower auth response did not include PIN data; cannot verify configured PIN"
+                "Mower auth response did not include PIN data; cannot verify PIN"
             )
 
         if str(mower_pin) != pin:
             raise GrouwBleAuthenticationError(
-                "Configured mower PIN does not match the mower auth response"
+                "PIN does not match the mower auth response"
             )
 
         _LOGGER.debug(
-            "[%s tx=%s] configured PIN verified against mower auth response",
+            "[%s tx=%s] PIN verified against mower auth response",
             self.address, self._tx_id
         )
 
@@ -577,7 +577,10 @@ class GrouwBleMowerClient:
                 auth_message = await self._wait_for_response(
                     queue, DAYE_RESPONSE_PIN_OR_AUTH, timeout, "auth",
                 )
-                self._verify_auth_response_pin(auth_message, auth_pin or self.pin)
+                self._verify_auth_response_pin(
+                    auth_message,
+                    self.pin if auth_pin is None else auth_pin,
+                )
                 _drain_queue(queue)
 
             for payload, expected_cmd, delay, command_name, collect_count in steps:

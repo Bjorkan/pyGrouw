@@ -341,6 +341,20 @@ def test_verify_auth_response_requires_pin_data_when_pin_is_configured() -> None
     assert not isinstance(exc_info.value, GrouwBleAuthenticationError)
 
 
+def test_verify_auth_response_pin_rejects_empty_explicit_pin() -> None:
+    """Explicit empty auth pins must fail instead of falling back to client.pin."""
+    client = GrouwBleMowerClient(
+        "AA:BB:CC:DD:EE:FF", "Test mower", pin="1234"
+    )
+    client._tx_id = 1
+
+    with pytest.raises(GrouwBleAuthenticationError, match="PIN is required"):
+        client._verify_auth_response_pin(
+            {"cmd": DAYE_RESPONSE_PIN_OR_AUTH, "mower_pin": "1234"},
+            "",
+        )
+
+
 def test_change_pin_uses_old_pin_for_single_session_verification() -> None:
     """PIN changes authenticate with the old PIN and verify in the same session."""
 
