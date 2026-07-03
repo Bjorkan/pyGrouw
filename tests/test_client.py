@@ -18,6 +18,8 @@ from pygrouw.client import (
 )
 from pygrouw.protocol import (
     DAYE_RESPONSE_PIN_OR_AUTH,
+    DAYE_RESPONSE_PIN_CHANGE,
+    encode_daye_change_pin,
     encode_bluekey_command,
     encode_daye_command,
 )
@@ -337,6 +339,53 @@ def test_verify_auth_response_requires_pin_data_when_pin_is_configured() -> None
         client._verify_auth_response({"cmd": DAYE_RESPONSE_PIN_OR_AUTH})
 
     assert not isinstance(exc_info.value, GrouwBleAuthenticationError)
+
+
+def test_change_pin_uses_old_pin_for_single_session_verification() -> None:
+    """PIN changes authenticate with the old PIN and verify in the same session."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient(
+            "AA:BB:CC:DD:EE:FF", "Test mower", pin="9999"
+        )
+        seen: dict[str, object] = {}
+
+        async def fake_multi_request(
+            steps: list[tuple[bytes, int | None | set[int], float, str, int]],
+            authenticate: bool = True,
+            auth_pin: str | None = None,
+            **kwargs: object,
+        ) -> list[dict[str, object]]:
+            seen["steps"] = steps
+            seen["authenticate"] = authenticate
+            seen["auth_pin"] = auth_pin
+            return [
+                {"cmd": DAYE_RESPONSE_PIN_CHANGE, "pin_change_success": True},
+                {"cmd": DAYE_RESPONSE_PIN_OR_AUTH, "mower_pin": "4321"},
+            ]
+
+        client._async_request_daye_multi_locked = (  # type: ignore[method-assign]
+            fake_multi_request
+        )
+
+        response = await client.async_change_pin("4321", old_pin="1234")
+
+        steps = seen["steps"]
+        assert isinstance(steps, list)
+        assert seen["authenticate"] is True
+        assert seen["auth_pin"] == "1234"
+        assert steps[0][0] == encode_daye_change_pin("1234", "4321")
+        assert steps[0][1] == DAYE_RESPONSE_PIN_CHANGE
+        assert steps[0][3] == "change_pin"
+        assert steps[0][4] == 1
+        assert steps[1][0] == encode_daye_command("auth_query")
+        assert steps[1][1] == DAYE_RESPONSE_PIN_OR_AUTH
+        assert steps[1][3] == "change_pin_verify"
+        assert steps[1][4] == 1
+        assert response["pin_change_success"] is True
+        assert client.pin == "4321"
+
+    asyncio.run(run())
 
 
 def test_request_mtu_with_log_calls_supported_client() -> None:
