@@ -1,0 +1,61 @@
+target-version = "py311"
+line-length = 100
+src = ["src"]
+force-exclude = true
+
+[lint]
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "E501",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "ASYNC",
+    "BLE",
+    "A",
+    "ARG",
+    "C4",
+    "FA",
+    "G",
+    "LOG",
+    "PERF",
+    "PIE",
+    "PT",
+    "RET",
+    "RSE",
+    "S",
+    "SIM",
+    "T20",
+    "RUF",
+]
+
+ignore = [
+    # Timeouts are intentionally exposed by the public asynchronous BLE API.
+    "ASYNC109",
+
+    # Explicit try/except blocks are clearer for best-effort BLE cleanup.
+    "SIM105",
+]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = [
+    # Test doubles often need to match external callback signatures.
+    "ARG",
+
+    # pytest uses plain assert statements by design.
+    "S101",
+]
+
+[lint.isort]
+known-first-party = ["pygrouw"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true

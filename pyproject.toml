@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,17 +9,26 @@ description = "Python BLE library for Grouw robotic mowers using the Daye Power 
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Jesper B" }]
-keywords = ["bluetooth", "ble", "grouw", "mower", "home-assistant"]
+keywords = [
+    "bluetooth",
+    "ble",
+    "grouw",
+    "mower",
+    "home-assistant",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Home Automation",
+    "Typing :: Typed",
 ]
 dependencies = [
     "bleak>=0.21.1",
@@ -44,4 +53,6 @@ pygrouw = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+addopts = ["--import-mode=importlib"]
+strict_config = true
+strict_markers = true
