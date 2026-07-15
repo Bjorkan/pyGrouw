@@ -50,6 +50,7 @@ from .protocol import (
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
+    redact_daye_payload,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ class GrouwBleMowerClient:
             )
             _LOGGER.debug(
                 "[%s tx=%s] write %s ok payload=%s",
-                self.address, self._tx_id, label, payload.hex()
+                self.address, self._tx_id, label, redact_daye_payload(payload)
             )
         except BLE_BACKEND_EXCEPTIONS as err:
             _LOGGER.error(

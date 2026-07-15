@@ -23,6 +23,7 @@ from pygrouw.protocol import (
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
+    redact_daye_payload,
     state_from_message,
 )
 
@@ -103,23 +104,17 @@ def test_parse_daye_payload_ignores_non_dym_payload() -> None:
 
 def test_parse_daye_payload_does_not_decode_short_status_payload() -> None:
     """Only the captured 22-byte DYM status shape is decoded as state."""
-    message = parse_daye_payload(bytes.fromhex("44594d806400160601"))
-
-    assert message == {
-        "raw_hex": "44594d806400160601",
-        "cmd": 0x80,
-        "trailer": "160601",
-    }
+    assert parse_daye_payload(bytes.fromhex("44594d806400160601")) is None
 
 
 def test_parse_daye_auth_response_extracts_numeric_pin_digits() -> None:
     """The auth/PIN response exposes the mower PIN as four digit bytes."""
     message = parse_daye_payload(
-        bytes.fromhex("44594d8c0102030400000000000000000000160601")
+        bytes.fromhex("44594d8c010203040000000000000000000000160601")
     )
 
     assert message == {
-        "raw_hex": "44594d8c0102030400000000000000000000160601",
+        "raw_hex": "44594d8c010203040000000000000000000000160601",
         "cmd": 0x8C,
         "trailer": "160601",
         "mower_pin": "1234",
@@ -205,7 +200,7 @@ def test_parse_daye_multi_area_response() -> None:
 def test_parse_daye_multi_area_response_non_zero_distance() -> None:
     """Non-zero distances are correctly decoded from decimal-chunk bytes."""
     message = parse_daye_payload(
-        bytes.fromhex("44594d8d0501000110000704160601")
+        bytes.fromhex("44594d8d050100011000070400000000000000160601")
     )
 
     assert message is not None
@@ -280,7 +275,6 @@ def test_parse_daye_mower_settings_response() -> None:
         "helix": False,
         "rain_delay_hour": 0,
         "rain_delay_minute": 0,
-        "led": False,
     }
 
 
@@ -344,14 +338,14 @@ def test_redact_daye_message_hides_pin_and_auth_pin_bytes() -> None:
     """PIN values must not leak into diagnostics or normal debug logs."""
     redacted = redact_daye_message(
         {
-            "raw_hex": "44594d8c0102030400000000000000000000160601",
+            "raw_hex": "44594d8c010203040000000000000000000000160601",
             "cmd": 0x8C,
             "mower_pin": "1234",
         }
     )
 
     assert redacted == {
-        "raw_hex": "44594d8c********00000000000000000000160601",
+        "raw_hex": "44594d8c********0000000000000000000000160601",
         "cmd": 0x8C,
         "mower_pin": "****",
     }
@@ -437,3 +431,77 @@ def test_state_from_message_maps_confirmed_dym_fields() -> None:
     assert state.station is False
     assert state.last_response_cmd == 0x80
     assert state.last_seen is not None
+
+
+def test_known_dym_responses_require_complete_notification_framing() -> None:
+    """Truncated or incorrectly terminated known packets are ignored."""
+    assert parse_daye_payload(bytes.fromhex("44594d8c01020304")) is None
+    assert parse_daye_payload(bytes.fromhex("44594d8d0000000000000000")) is None
+    assert parse_daye_payload(
+        bytes.fromhex("44594d89000000000000000000000000000000ffffff")
+    ) is None
+
+
+def test_known_dym_fields_are_range_checked() -> None:
+    """Typed settings are not produced from impossible protocol values."""
+    assert parse_daye_payload(
+        bytes.fromhex("44594d8d650a00000000000000000000000000160601")
+    ) is None
+    assert parse_daye_payload(
+        bytes.fromhex("44594d89020000000000000000000000000000160601")
+    ) is None
+    assert parse_daye_payload(
+        bytes.fromhex("44594d84181818181818180000000000000000160601")
+    ) is None
+    assert parse_daye_payload(
+        bytes.fromhex("44594d85010101010101010a00000000000000160601")
+    ) is None
+
+
+def test_non_status_response_does_not_refresh_status_last_seen() -> None:
+    """Communication freshness and status freshness remain independent."""
+    previous = MowerState(address="AA:BB", battery_level=50)
+    state = state_from_message(
+        "AA:BB",
+        {"cmd": DAYE_RESPONSE_MOWER_SETTINGS, "mower_settings": {}},
+        previous,
+    )
+
+    assert state.last_communication is not None
+    assert state.last_seen is None
+    assert not state.available
+    assert state.battery_level == 50
+
+
+def test_status_response_refreshes_both_communication_and_status_timestamps() -> None:
+    """A validated status message remains the source of status availability."""
+    state = state_from_message(
+        "AA:BB",
+        {"cmd": 0x80, "battery_level": 75, "mode": 1, "station": False},
+    )
+
+    assert state.last_communication is not None
+    assert state.last_seen is not None
+    assert state.available
+
+
+def test_redact_daye_payload_masks_pin_change_writes() -> None:
+    """Both old and new PIN bytes are removed before outgoing debug logging."""
+    payload = bytes.fromhex(
+        "44594d06010203040506070800000000000000160601ff0a"
+    )
+    redacted = redact_daye_payload(payload)
+
+    assert "01020304" not in redacted
+    assert "05060708" not in redacted
+    assert redacted.startswith("44594d06****************")
+
+
+def test_dym_settings_do_not_infer_led_from_reserved_bytes() -> None:
+    """APK-only BlueKey fields are not promoted into captured DYM layouts."""
+    message = parse_daye_payload(
+        bytes.fromhex("44594d89000000000000000100000000000000160601")
+    )
+
+    assert message is not None
+    assert "led" not in message["mower_settings"]
