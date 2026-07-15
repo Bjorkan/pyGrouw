@@ -145,6 +145,10 @@ class GrouwBleMowerClient:
 
         normalized_address = normalize_address(address)
         device = await find_device_by_address(normalized_address, timeout=timeout)
+        if device is None:
+            raise GrouwBleDeviceNotFound(
+                f"Mower {normalized_address} was not discovered within {timeout:g}s"
+            )
         device_name = name or getattr(device, "name", None) or DEFAULT_NAME
         return cls(
             normalized_address,
@@ -152,6 +156,68 @@ class GrouwBleMowerClient:
             pin,
             device=device,
         )
+
+    async def _establish_connection(self, timeout: float) -> BleakClient:
+        """Establish a bounded connection using the latest available BLE route."""
+        ble_device = await self._resolve_device()
+        if ble_device is None:
+            _LOGGER.error(
+                "[%s tx=%s] no connectable BLE device found",
+                self.address,
+                self._tx_id,
+            )
+            raise GrouwBleDeviceNotFound(
+                f"No connectable Bluetooth device found for {self.address}"
+            )
+
+        retry_device = ble_device
+        provider = self._device_provider
+
+        def _ble_device_callback() -> BLEDevice:
+            """Refresh a synchronous provider before connector retries."""
+            nonlocal retry_device
+            if provider is None:
+                return retry_device
+            result = provider()
+            if inspect.isawaitable(result):
+                # The connector callback is synchronous. Avoid leaking a coroutine
+                # and retain the latest asynchronously resolved route.
+                close = getattr(result, "close", None)
+                if close is not None:
+                    close()
+                return retry_device
+            if result is not None:
+                retry_device = result
+            return retry_device
+
+        callback = _ble_device_callback if provider is not None else None
+        _LOGGER.debug(
+            "[%s tx=%s] connecting with bounded deadline=%ss",
+            self.address,
+            self._tx_id,
+            timeout,
+        )
+        try:
+            async with asyncio.timeout(timeout):
+                return await establish_connection(
+                    BleakClient,
+                    ble_device,
+                    self.name,
+                    max_attempts=3,
+                    ble_device_callback=callback,
+                )
+        except GrouwBleDeviceNotFound:
+            raise
+        except BLE_BACKEND_EXCEPTIONS as err:
+            _LOGGER.error(
+                "[%s tx=%s] connect failed: %s",
+                self.address,
+                self._tx_id,
+                err,
+            )
+            raise GrouwBleConnectionError(
+                f"BLE connect failed for {self.address}: {err}"
+            ) from err
 
     async def _write_with_log(
         self,
@@ -326,18 +392,6 @@ class GrouwBleMowerClient:
             self.address, self._tx_id, command_name, follow_up_status, authenticate
         )
 
-        ble_device = await self._resolve_device()
-        if ble_device is None:
-            _LOGGER.error(
-                "[%s tx=%s] no connectable BLE device found",
-                self.address, self._tx_id
-            )
-            raise GrouwBleDeviceNotFound(
-                f"No connectable Bluetooth device found for {self.address}"
-            )
-
-        _LOGGER.debug("[%s tx=%s] BLE device resolved", self.address, self._tx_id)
-
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
@@ -354,26 +408,7 @@ class GrouwBleMowerClient:
         client: BleakClient | None = None
         notify_started = False
         try:
-            _LOGGER.debug(
-                "[%s tx=%s] connecting (timeout=%s)",
-                self.address, self._tx_id, timeout
-            )
-            try:
-                client = await establish_connection(
-                    BleakClient,
-                    ble_device,
-                    self.name,
-                    max_attempts=3,
-                    timeout=timeout,
-                )
-            except BLE_BACKEND_EXCEPTIONS as err:
-                _LOGGER.error(
-                    "[%s tx=%s] connect failed: %s",
-                    self.address, self._tx_id, err
-                )
-                raise GrouwBleConnectionError(
-                    f"BLE connect failed for {self.address}: {err}"
-                ) from err
+            client = await self._establish_connection(timeout)
 
             await self._request_mtu_with_log(client)
 
@@ -545,12 +580,6 @@ class GrouwBleMowerClient:
         self._tx_counter += 1
         self._tx_id = self._tx_counter
 
-        ble_device = await self._resolve_device()
-        if ble_device is None:
-            raise GrouwBleDeviceNotFound(
-                f"No connectable Bluetooth device found for {self.address}"
-            )
-
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
@@ -563,9 +592,7 @@ class GrouwBleMowerClient:
         notify_started = False
         responses: list[Any] = []
         try:
-            client = await establish_connection(
-                BleakClient, ble_device, self.name, max_attempts=3, timeout=timeout,
-            )
+            client = await self._establish_connection(timeout)
             await self._request_mtu_with_log(client)
             await client.start_notify(READ_CHARACTERISTIC_UUID, _notification_handler)
             notify_started = True
@@ -600,7 +627,13 @@ class GrouwBleMowerClient:
 
             return responses
 
-        except (GrouwBleAuthenticationError, GrouwBleConnectionError, GrouwBleGattError, GrouwBleTimeout):
+        except (
+            GrouwBleAuthenticationError,
+            GrouwBleConnectionError,
+            GrouwBleDeviceNotFound,
+            GrouwBleGattError,
+            GrouwBleTimeout,
+        ):
             raise
         except BLE_BACKEND_EXCEPTIONS as err:
             raise GrouwBleError(f"Unexpected BLE error on {self.address}: {err}") from err

@@ -520,3 +520,131 @@ def test_raw_payload_bluekey_defaults_to_any_parsed_response() -> None:
         }
 
     asyncio.run(run())
+
+
+def test_from_discovery_raises_when_address_is_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The convenience factory must not return an unusable client."""
+
+    async def run() -> None:
+        import pygrouw.discovery as discovery
+        from pygrouw.client import GrouwBleDeviceNotFound
+
+        async def find_none(*args: object, **kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(discovery, "find_device_by_address", find_none)
+
+        with pytest.raises(GrouwBleDeviceNotFound, match="was not discovered"):
+            await GrouwBleMowerClient.from_discovery(
+                "aa:bb:cc:dd:ee:ff",
+                timeout=0.1,
+            )
+
+    asyncio.run(run())
+
+
+def test_connection_uses_fresh_device_callback_without_forwarding_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Connector retries can refresh a synchronous provider route."""
+
+    async def run() -> None:
+        import pygrouw.client as ble_client
+
+        first = object()
+        second = object()
+        devices = iter((first, second))
+        seen: dict[str, object] = {}
+
+        def provider() -> object:
+            return next(devices)
+
+        async def fake_connect(
+            _client_class: object,
+            initial_device: object,
+            _name: str,
+            **kwargs: object,
+        ) -> object:
+            seen["initial"] = initial_device
+            seen["kwargs"] = kwargs
+            callback = kwargs["ble_device_callback"]
+            assert callable(callback)
+            seen["retry"] = callback()
+            return object()
+
+        monkeypatch.setattr(ble_client, "establish_connection", fake_connect)
+        client = GrouwBleMowerClient(
+            "AA:BB:CC:DD:EE:FF",
+            "Test mower",
+            device_provider=provider,  # type: ignore[arg-type]
+        )
+        client._tx_id = 1
+
+        connected = await client._establish_connection(0.1)
+
+        assert connected is not None
+        assert seen["initial"] is first
+        assert seen["retry"] is second
+        kwargs = seen["kwargs"]
+        assert isinstance(kwargs, dict)
+        assert kwargs["max_attempts"] == 3
+        assert "timeout" not in kwargs
+
+    asyncio.run(run())
+
+
+def test_connection_deadline_bounds_connector_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public connection timeout is an outer wall-clock deadline."""
+
+    async def run() -> None:
+        import pygrouw.client as ble_client
+
+        async def never_connect(*args: object, **kwargs: object) -> object:
+            await asyncio.sleep(1)
+            return object()
+
+        monkeypatch.setattr(ble_client, "establish_connection", never_connect)
+        client = GrouwBleMowerClient(
+            "AA:BB:CC:DD:EE:FF",
+            "Test mower",
+            device_provider=lambda: object(),
+        )
+        client._tx_id = 1
+        start = asyncio.get_running_loop().time()
+
+        with pytest.raises(GrouwBleConnectionError, match="connect failed"):
+            await client._establish_connection(0.02)
+
+        assert asyncio.get_running_loop().time() - start < 0.2
+
+    asyncio.run(run())
+
+
+def test_multi_step_path_preserves_connection_error_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Single and multi-step operations share connection error classification."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient(
+            "AA:BB:CC:DD:EE:FF",
+            "Test mower",
+            device_provider=lambda: object(),
+        )
+
+        async def fail_connect(_timeout: float) -> object:
+            raise GrouwBleConnectionError("route unavailable")
+
+        monkeypatch.setattr(client, "_establish_connection", fail_connect)
+
+        with pytest.raises(GrouwBleConnectionError, match="route unavailable"):
+            await client._async_request_daye_multi_locked(
+                [(b"DYM", None, 0, "write", 0)],
+                authenticate=False,
+            )
+
+    asyncio.run(run())
