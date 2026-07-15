@@ -8,35 +8,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  apply-prepared-patch:
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/02-protocol-integrity'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-      - name: Apply and validate prepared patch
-        run: |
-          git apply automation_patch.diff
-          rm automation_patch.diff
-          python -m pip install -e ".[test]"
-          python -m pytest -q
-          python -m compileall -q src tests
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: validate DYM frames and separate status freshness"
-          git push origin HEAD:${{ github.head_ref }}
-
   test:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
