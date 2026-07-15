@@ -1,4 +1,5 @@
 """Tests for the high-level mower model."""
+
 from __future__ import annotations
 
 import asyncio

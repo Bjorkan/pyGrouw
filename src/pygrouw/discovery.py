@@ -1,4 +1,5 @@
 """BLE discovery helpers for Grouw mower devices."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -47,9 +48,7 @@ def is_supported_advertisement(
     service_uuids: list[str] | tuple[str, ...] = (),
 ) -> bool:
     """Return true for supported Daye mower Bluetooth discoveries."""
-    return is_supported_bluetooth_name(name or "") or has_supported_service_uuid(
-        service_uuids
-    )
+    return is_supported_bluetooth_name(name or "") or has_supported_service_uuid(service_uuids)
 
 
 def _metadata_service_uuids(device: BLEDevice) -> tuple[str, ...]:
@@ -92,7 +91,7 @@ def _discovered_mower(
 
     return DiscoveredMower(
         device=device,
-        address=normalize_address(str(getattr(device, "address"))),
+        address=normalize_address(str(device.address)),
         name=name or DEFAULT_NAME,
         service_uuids=service_uuids,
         rssi=_advertisement_rssi(advertisement),
@@ -143,6 +142,6 @@ async def find_device_by_address(
 
     discoveries = await scanner.discover(timeout=timeout)
     for device in discoveries:
-        if normalize_address(str(getattr(device, "address"))) == target:
+        if normalize_address(str(device.address)) == target:
             return device
     return None

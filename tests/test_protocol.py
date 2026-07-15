@@ -1,4 +1,5 @@
 """Tests for Grouw BLE framing."""
+
 from __future__ import annotations
 
 from pygrouw.protocol import (
@@ -50,9 +51,7 @@ def test_encode_raw_payload_accepts_hex_and_command() -> None:
     assert encode_raw_payload({"command": "bluekey_query_pin"}) == encode_bluekey_command(
         "query_pin"
     )
-    assert encode_raw_payload({"bluekey": "query_pin"}) == encode_bluekey_command(
-        "query_pin"
-    )
+    assert encode_raw_payload({"bluekey": "query_pin"}) == encode_bluekey_command("query_pin")
 
 
 def test_daye_ten_to_hex_matches_apk_helper_shape() -> None:
@@ -82,9 +81,7 @@ def test_encode_bluekey_payload_accepts_generic_sub_command() -> None:
 
 def test_parse_daye_status_notification_maps_observed_fields() -> None:
     """Parse battery and mode bytes observed in the HCI snoop log."""
-    message = parse_daye_payload(
-        bytes.fromhex("44594d8064331b010004000100444100000000160601")
-    )
+    message = parse_daye_payload(bytes.fromhex("44594d8064331b010004000100444100000000160601"))
 
     assert message == {
         "raw_hex": "44594d8064331b010004000100444100000000160601",
@@ -114,9 +111,7 @@ def test_parse_daye_payload_does_not_decode_short_status_payload() -> None:
 
 def test_parse_daye_auth_response_extracts_numeric_pin_digits() -> None:
     """The auth/PIN response exposes the mower PIN as four digit bytes."""
-    message = parse_daye_payload(
-        bytes.fromhex("44594d8c0102030400000000000000000000160601")
-    )
+    message = parse_daye_payload(bytes.fromhex("44594d8c0102030400000000000000000000160601"))
 
     assert message == {
         "raw_hex": "44594d8c0102030400000000000000000000160601",
@@ -145,9 +140,9 @@ def test_encode_daye_change_pin_matches_captured_payloads() -> None:
 
 def test_encode_daye_change_pin_validates_length() -> None:
     """PIN must be exactly 4 decimal digits."""
-    from pygrouw.protocol import encode_daye_change_pin
-
     import pytest
+
+    from pygrouw.protocol import encode_daye_change_pin
 
     with pytest.raises(ValueError, match="PIN must be exactly 4 decimal digits"):
         encode_daye_change_pin("123", "1234")
@@ -157,9 +152,7 @@ def test_encode_daye_change_pin_validates_length() -> None:
 
 def test_parse_daye_pin_change_response() -> None:
     """A 0x86 response with all-zero payload indicates success."""
-    message = parse_daye_payload(
-        bytes.fromhex("44594d86000000000000000000000000000000160601")
-    )
+    message = parse_daye_payload(bytes.fromhex("44594d86000000000000000000000000000000160601"))
 
     assert message is not None
     assert message["cmd"] == 0x86
@@ -188,9 +181,7 @@ def test_encode_daye_multi_area_validates_ranges() -> None:
 
 def test_parse_daye_multi_area_response() -> None:
     """A 0x8d response is parsed into percentage and distance fields."""
-    message = parse_daye_payload(
-        bytes.fromhex("44594d8d000000000000000000000000000000160601")
-    )
+    message = parse_daye_payload(bytes.fromhex("44594d8d000000000000000000000000000000160601"))
 
     assert message is not None
     assert message["cmd"] == DAYE_RESPONSE_MULTI_AREA
@@ -204,9 +195,7 @@ def test_parse_daye_multi_area_response() -> None:
 
 def test_parse_daye_multi_area_response_non_zero_distance() -> None:
     """Non-zero distances are correctly decoded from decimal-chunk bytes."""
-    message = parse_daye_payload(
-        bytes.fromhex("44594d8d0501000110000704160601")
-    )
+    message = parse_daye_payload(bytes.fromhex("44594d8d0501000110000704160601"))
 
     assert message is not None
     assert message["multi_area"] == {
@@ -255,21 +244,25 @@ def test_encode_daye_mower_settings_validates_ranges() -> None:
 
     with pytest.raises(ValueError, match="rain_delay_hours"):
         encode_daye_mower_settings(
-            mow_in_rain=False, boundary_cut=False, helix=False,
-            rain_delay_hours=24, rain_delay_minutes=0,
+            mow_in_rain=False,
+            boundary_cut=False,
+            helix=False,
+            rain_delay_hours=24,
+            rain_delay_minutes=0,
         )
     with pytest.raises(ValueError, match="rain_delay_minutes"):
         encode_daye_mower_settings(
-            mow_in_rain=False, boundary_cut=False, helix=False,
-            rain_delay_hours=0, rain_delay_minutes=60,
+            mow_in_rain=False,
+            boundary_cut=False,
+            helix=False,
+            rain_delay_hours=0,
+            rain_delay_minutes=60,
         )
 
 
 def test_parse_daye_mower_settings_response() -> None:
     """A 0x89 response is parsed into structured settings fields."""
-    message = parse_daye_payload(
-        bytes.fromhex("44594d89000100000000000000000000000000160601")
-    )
+    message = parse_daye_payload(bytes.fromhex("44594d89000100000000000000000000000000160601"))
 
     assert message is not None
     assert message["cmd"] == DAYE_RESPONSE_MOWER_SETTINGS
@@ -316,9 +309,7 @@ def test_encode_daye_work_time_rejects_invalid_inputs() -> None:
 
 def test_parse_daye_work_time_starts_notification() -> None:
     """A 0x84 notification is parsed into structured day entries."""
-    message = parse_daye_payload(
-        bytes.fromhex("44594d840e0e0e0e0e0e0e0101010101010100160601")
-    )
+    message = parse_daye_payload(bytes.fromhex("44594d840e0e0e0e0e0e0e0101010101010100160601"))
 
     assert message is not None
     assert message["cmd"] == DAYE_RESPONSE_WORK_TIME_START
@@ -329,9 +320,7 @@ def test_parse_daye_work_time_starts_notification() -> None:
 
 def test_parse_daye_work_time_durations_notification() -> None:
     """A 0x85 notification is parsed into structured duration entries."""
-    message = parse_daye_payload(
-        bytes.fromhex("44594d85080808080808080000000000000000160601")
-    )
+    message = parse_daye_payload(bytes.fromhex("44594d85080808080808080000000000000000160601"))
 
     assert message is not None
     assert message["cmd"] == DAYE_RESPONSE_WORK_TIME_DURATION

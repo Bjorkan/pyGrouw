@@ -1,4 +1,5 @@
 """Exceptions raised by pyGrouw."""
+
 from __future__ import annotations
 
 

@@ -1,4 +1,5 @@
 """BLE client for Grouw mower devices."""
+
 from __future__ import annotations
 
 import asyncio
@@ -29,11 +30,10 @@ from .exceptions import (
 )
 from .protocol import (
     BLUEKEY_PREFIX,
-    DAYE_CHANGE_PIN,
-    DAYE_MULTI_AREA_QUERY_PAYLOAD,
-    DAYE_RESPONSE_MULTI_AREA,
     DAYE_MOWER_SETTINGS_QUERY_PAYLOAD,
+    DAYE_MULTI_AREA_QUERY_PAYLOAD,
     DAYE_RESPONSE_MOWER_SETTINGS,
+    DAYE_RESPONSE_MULTI_AREA,
     DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
     DAYE_RESPONSE_STATUS,
@@ -42,8 +42,8 @@ from .protocol import (
     DAYE_WORK_TIME_QUERY_PAYLOAD,
     encode_daye_change_pin,
     encode_daye_command,
-    encode_daye_multi_area,
     encode_daye_mower_settings,
+    encode_daye_multi_area,
     encode_daye_session_start,
     encode_daye_work_time_durations,
     encode_daye_work_time_starts,
@@ -88,9 +88,7 @@ def _coerce_expected_cmd(value: Any) -> int | None:
     try:
         command = int(value, 0) if isinstance(value, str) else int(value)
     except (TypeError, ValueError) as err:
-        raise GrouwBleError(
-            "expect_cmd must be an integer command byte or null"
-        ) from err
+        raise GrouwBleError("expect_cmd must be an integer command byte or null") from err
     if not 0 <= command <= 0xFF:
         raise GrouwBleError("expect_cmd must be between 0 and 255")
     return command
@@ -215,9 +213,7 @@ class GrouwBleMowerClient:
                 self._tx_id,
                 err,
             )
-            raise GrouwBleConnectionError(
-                f"BLE connect failed for {self.address}: {err}"
-            ) from err
+            raise GrouwBleConnectionError(f"BLE connect failed for {self.address}: {err}") from err
 
     async def _write_with_log(
         self,
@@ -227,18 +223,18 @@ class GrouwBleMowerClient:
     ) -> None:
         """Write to GATT characteristic and log the result."""
         try:
-            await client.write_gatt_char(
-                WRITE_CHARACTERISTIC_UUID, payload, response=True
-            )
+            await client.write_gatt_char(WRITE_CHARACTERISTIC_UUID, payload, response=True)
             _LOGGER.debug(
-                "[%s tx=%s] write %s ok payload=%s",
-                self.address, self._tx_id, label, payload.hex()
+                "[%s tx=%s] write %s ok payload=%s", self.address, self._tx_id, label, payload.hex()
             )
         except BLE_BACKEND_EXCEPTIONS as err:
             _LOGGER.error(
                 "[%s tx=%s] write %s failed: %s (errno=%s)",
-                self.address, self._tx_id, label, err,
-                getattr(err, "args", ("unknown",))
+                self.address,
+                self._tx_id,
+                label,
+                err,
+                getattr(err, "args", ("unknown",)),
             )
             raise GrouwBleGattError(
                 f"GATT write failed for {label} on {self.address}: {err}"
@@ -251,7 +247,9 @@ class GrouwBleMowerClient:
         if request_mtu is None:
             _LOGGER.debug(
                 "[%s tx=%s] MTU request unsupported (current_mtu=%s)",
-                self.address, self._tx_id, current_mtu
+                self.address,
+                self._tx_id,
+                current_mtu,
             )
             return
 
@@ -262,14 +260,20 @@ class GrouwBleMowerClient:
         except Exception as err:  # noqa: BLE001 - MTU support is backend-specific
             _LOGGER.debug(
                 "[%s tx=%s] MTU request skipped: %s (current_mtu=%s)",
-                self.address, self._tx_id, err, current_mtu
+                self.address,
+                self._tx_id,
+                err,
+                current_mtu,
             )
             return
 
         _LOGGER.debug(
             "[%s tx=%s] MTU request ok requested=%s result=%s current_mtu=%s",
-            self.address, self._tx_id, DEFAULT_REQUESTED_MTU, result,
-            getattr(client, "mtu_size", "unknown")
+            self.address,
+            self._tx_id,
+            DEFAULT_REQUESTED_MTU,
+            result,
+            getattr(client, "mtu_size", "unknown"),
         )
 
     async def _wait_for_response(
@@ -286,17 +290,21 @@ class GrouwBleMowerClient:
             if remaining <= 0:
                 _LOGGER.error(
                     "[%s tx=%s] notification timeout in %s (expected_cmd=%s)",
-                    self.address, self._tx_id, phase, expected_cmd
+                    self.address,
+                    self._tx_id,
+                    phase,
+                    expected_cmd,
                 )
-                raise GrouwBleTimeout(
-                    f"Timeout waiting for notification from {self.address}"
-                )
+                raise GrouwBleTimeout(f"Timeout waiting for notification from {self.address}")
             try:
                 message = await asyncio.wait_for(queue.get(), timeout=remaining)
-            except asyncio.TimeoutError as err:
+            except TimeoutError as err:
                 _LOGGER.error(
                     "[%s tx=%s] notification timeout in %s (expected_cmd=%s)",
-                    self.address, self._tx_id, phase, expected_cmd
+                    self.address,
+                    self._tx_id,
+                    phase,
+                    expected_cmd,
                 )
                 raise GrouwBleTimeout(
                     f"Timeout waiting for notification from {self.address}"
@@ -309,21 +317,31 @@ class GrouwBleMowerClient:
                 if cmd in expected_cmd:
                     _LOGGER.debug(
                         "[%s tx=%s] selected %s response cmd=%s raw=%s",
-                        self.address, self._tx_id, phase, cmd,
-                        redact_daye_message(message).get("raw_hex", "?")
+                        self.address,
+                        self._tx_id,
+                        phase,
+                        cmd,
+                        redact_daye_message(message).get("raw_hex", "?"),
                     )
                     return message
             elif cmd == expected_cmd:
                 _LOGGER.debug(
                     "[%s tx=%s] selected %s response cmd=%s raw=%s",
-                    self.address, self._tx_id, phase, cmd,
-                    redact_daye_message(message).get("raw_hex", "?")
+                    self.address,
+                    self._tx_id,
+                    phase,
+                    cmd,
+                    redact_daye_message(message).get("raw_hex", "?"),
                 )
                 return message
 
             _LOGGER.debug(
                 "[%s tx=%s] ignoring notification cmd=%s in %s (waiting for %s)",
-                self.address, self._tx_id, cmd, phase, expected_cmd
+                self.address,
+                self._tx_id,
+                cmd,
+                phase,
+                expected_cmd,
             )
 
     def _verify_auth_response_pin(self, message: dict[str, Any], pin: str) -> None:
@@ -333,18 +351,13 @@ class GrouwBleMowerClient:
 
         mower_pin = message.get("mower_pin")
         if mower_pin is None:
-            raise GrouwBleError(
-                "Mower auth response did not include PIN data; cannot verify PIN"
-            )
+            raise GrouwBleError("Mower auth response did not include PIN data; cannot verify PIN")
 
         if str(mower_pin) != pin:
-            raise GrouwBleAuthenticationError(
-                "PIN does not match the mower auth response"
-            )
+            raise GrouwBleAuthenticationError("PIN does not match the mower auth response")
 
         _LOGGER.debug(
-            "[%s tx=%s] PIN verified against mower auth response",
-            self.address, self._tx_id
+            "[%s tx=%s] PIN verified against mower auth response", self.address, self._tx_id
         )
 
     def _verify_auth_response(self, message: dict[str, Any]) -> None:
@@ -389,7 +402,11 @@ class GrouwBleMowerClient:
 
         _LOGGER.debug(
             "[%s tx=%s] request starting command=%s follow_up=%s authenticate=%s",
-            self.address, self._tx_id, command_name, follow_up_status, authenticate
+            self.address,
+            self._tx_id,
+            command_name,
+            follow_up_status,
+            authenticate,
         )
 
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -400,8 +417,9 @@ class GrouwBleMowerClient:
             if message is not None:
                 _LOGGER.debug(
                     "[%s tx=%s] notify raw=%s",
-                    self.address, self._tx_id,
-                    redact_daye_message(message).get("raw_hex", data.hex())
+                    self.address,
+                    self._tx_id,
+                    redact_daye_message(message).get("raw_hex", data.hex()),
                 )
                 loop.call_soon_threadsafe(queue.put_nowait, message)
 
@@ -412,19 +430,11 @@ class GrouwBleMowerClient:
 
             await self._request_mtu_with_log(client)
 
-            _LOGGER.debug(
-                "[%s tx=%s] connected, starting notify",
-                self.address, self._tx_id
-            )
+            _LOGGER.debug("[%s tx=%s] connected, starting notify", self.address, self._tx_id)
             try:
-                await client.start_notify(
-                    READ_CHARACTERISTIC_UUID, _notification_handler
-                )
+                await client.start_notify(READ_CHARACTERISTIC_UUID, _notification_handler)
             except BLE_BACKEND_EXCEPTIONS as err:
-                _LOGGER.error(
-                    "[%s tx=%s] start_notify failed: %s",
-                    self.address, self._tx_id, err
-                )
+                _LOGGER.error("[%s tx=%s] start_notify failed: %s", self.address, self._tx_id, err)
                 raise GrouwBleGattError(
                     f"GATT start_notify failed on {self.address}: {err}"
                 ) from err
@@ -433,13 +443,9 @@ class GrouwBleMowerClient:
             _LOGGER.debug("[%s tx=%s] notify started", self.address, self._tx_id)
 
             if authenticate:
-                await self._write_with_log(
-                    client, encode_daye_session_start(), "session_start"
-                )
+                await self._write_with_log(client, encode_daye_session_start(), "session_start")
                 await asyncio.sleep(DEFAULT_CHUNK_DELAY)
-                await self._write_with_log(
-                    client, encode_daye_command("auth_query"), "auth_query"
-                )
+                await self._write_with_log(client, encode_daye_command("auth_query"), "auth_query")
                 auth_message = await self._wait_for_response(
                     queue,
                     DAYE_RESPONSE_PIN_OR_AUTH,
@@ -449,18 +455,14 @@ class GrouwBleMowerClient:
                 self._verify_auth_response(auth_message)
 
                 _drain_queue(queue)
-                _LOGGER.debug(
-                    "[%s tx=%s] queue drained after auth",
-                    self.address, self._tx_id
-                )
+                _LOGGER.debug("[%s tx=%s] queue drained after auth", self.address, self._tx_id)
 
             await self._write_with_log(client, payload, "command")
             if follow_up_status:
                 await asyncio.sleep(DEFAULT_CHUNK_DELAY)
                 _drain_queue(queue)
                 _LOGGER.debug(
-                    "[%s tx=%s] queue drained before follow-up status",
-                    self.address, self._tx_id
+                    "[%s tx=%s] queue drained before follow-up status", self.address, self._tx_id
                 )
                 await self._write_with_log(
                     client, encode_daye_command("status"), "follow_up_status"
@@ -485,12 +487,9 @@ class GrouwBleMowerClient:
             raise
         except BLE_BACKEND_EXCEPTIONS as err:
             _LOGGER.error(
-                "[%s tx=%s] unexpected BLE backend error: %s",
-                self.address, self._tx_id, err
+                "[%s tx=%s] unexpected BLE backend error: %s", self.address, self._tx_id, err
             )
-            raise GrouwBleError(
-                f"Unexpected BLE error on {self.address}: {err}"
-            ) from err
+            raise GrouwBleError(f"Unexpected BLE error on {self.address}: {err}") from err
         finally:
             if client is not None:
                 if notify_started:
@@ -602,7 +601,10 @@ class GrouwBleMowerClient:
                 await asyncio.sleep(DEFAULT_CHUNK_DELAY)
                 await self._write_with_log(client, encode_daye_command("auth_query"), "auth_query")
                 auth_message = await self._wait_for_response(
-                    queue, DAYE_RESPONSE_PIN_OR_AUTH, timeout, "auth",
+                    queue,
+                    DAYE_RESPONSE_PIN_OR_AUTH,
+                    timeout,
+                    "auth",
                 )
                 self._verify_auth_response_pin(
                     auth_message,
@@ -618,7 +620,10 @@ class GrouwBleMowerClient:
                     collected: list[dict[str, Any]] = []
                     for _ in range(collect_count):
                         response = await self._wait_for_response(
-                            queue, expected_cmd, timeout, command_name,
+                            queue,
+                            expected_cmd,
+                            timeout,
+                            command_name,
                         )
                         collected.append(response)
                     responses.append(collected if collect_count > 1 else collected[0])
@@ -672,13 +677,25 @@ class GrouwBleMowerClient:
         async with self._request_lock:
             result = await self._async_request_daye_multi_locked(
                 [
-                    (encode_daye_multi_area(
-                        area2_percentage=area2_percentage,
-                        area2_distance=area2_distance,
-                        area3_percentage=area3_percentage,
-                        area3_distance=area3_distance,
-                    ), None, DEFAULT_CHUNK_DELAY, "multi_area_write", 0),
-                    (DAYE_MULTI_AREA_QUERY_PAYLOAD, DAYE_RESPONSE_MULTI_AREA, DEFAULT_CHUNK_DELAY, "multi_area_verify", 1),
+                    (
+                        encode_daye_multi_area(
+                            area2_percentage=area2_percentage,
+                            area2_distance=area2_distance,
+                            area3_percentage=area3_percentage,
+                            area3_distance=area3_distance,
+                        ),
+                        None,
+                        DEFAULT_CHUNK_DELAY,
+                        "multi_area_write",
+                        0,
+                    ),
+                    (
+                        DAYE_MULTI_AREA_QUERY_PAYLOAD,
+                        DAYE_RESPONSE_MULTI_AREA,
+                        DEFAULT_CHUNK_DELAY,
+                        "multi_area_verify",
+                        1,
+                    ),
                 ],
                 authenticate=True,
             )
@@ -721,15 +738,27 @@ class GrouwBleMowerClient:
         async with self._request_lock:
             result = await self._async_request_daye_multi_locked(
                 [
-                    (encode_daye_mower_settings(
-                        mow_in_rain=mow_in_rain,
-                        boundary_cut=boundary_cut,
-                        helix=helix,
-                        rain_delay_hours=rain_delay_hours,
-                        rain_delay_minutes=rain_delay_minutes,
-                        unknown_setting=unknown_setting,
-                    ), None, DEFAULT_CHUNK_DELAY, "mower_settings_write", 0),
-                    (DAYE_MOWER_SETTINGS_QUERY_PAYLOAD, DAYE_RESPONSE_MOWER_SETTINGS, DEFAULT_CHUNK_DELAY, "mower_settings_verify", 1),
+                    (
+                        encode_daye_mower_settings(
+                            mow_in_rain=mow_in_rain,
+                            boundary_cut=boundary_cut,
+                            helix=helix,
+                            rain_delay_hours=rain_delay_hours,
+                            rain_delay_minutes=rain_delay_minutes,
+                            unknown_setting=unknown_setting,
+                        ),
+                        None,
+                        DEFAULT_CHUNK_DELAY,
+                        "mower_settings_write",
+                        0,
+                    ),
+                    (
+                        DAYE_MOWER_SETTINGS_QUERY_PAYLOAD,
+                        DAYE_RESPONSE_MOWER_SETTINGS,
+                        DEFAULT_CHUNK_DELAY,
+                        "mower_settings_verify",
+                        1,
+                    ),
                 ],
                 authenticate=True,
             )
@@ -754,7 +783,13 @@ class GrouwBleMowerClient:
         async with self._request_lock:
             result = await self._async_request_daye_multi_locked(
                 [
-                    (DAYE_WORK_TIME_QUERY_PAYLOAD, {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION}, 0, "work_time_query", 2),
+                    (
+                        DAYE_WORK_TIME_QUERY_PAYLOAD,
+                        {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION},
+                        0,
+                        "work_time_query",
+                        2,
+                    ),
                 ],
                 authenticate=True,
             )
@@ -778,9 +813,27 @@ class GrouwBleMowerClient:
         async with self._request_lock:
             result = await self._async_request_daye_multi_locked(
                 [
-                    (encode_daye_work_time_starts(starts), None, DEFAULT_CHUNK_DELAY, "work_time_starts", 0),
-                    (encode_daye_work_time_durations(durations), None, DEFAULT_CHUNK_DELAY, "work_time_durations", 0),
-                    (DAYE_WORK_TIME_QUERY_PAYLOAD, {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION}, DEFAULT_CHUNK_DELAY, "work_time_verify", 2),
+                    (
+                        encode_daye_work_time_starts(starts),
+                        None,
+                        DEFAULT_CHUNK_DELAY,
+                        "work_time_starts",
+                        0,
+                    ),
+                    (
+                        encode_daye_work_time_durations(durations),
+                        None,
+                        DEFAULT_CHUNK_DELAY,
+                        "work_time_durations",
+                        0,
+                    ),
+                    (
+                        DAYE_WORK_TIME_QUERY_PAYLOAD,
+                        {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION},
+                        DEFAULT_CHUNK_DELAY,
+                        "work_time_verify",
+                        2,
+                    ),
                 ],
                 authenticate=True,
             )

@@ -1,4 +1,5 @@
 """Tests for Grouw BLE client helpers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -16,14 +17,14 @@ from pygrouw.client import (
     _coerce_expected_cmd,
     _drain_queue,
 )
+from pygrouw.const import DEFAULT_REQUESTED_MTU
 from pygrouw.protocol import (
-    DAYE_RESPONSE_PIN_OR_AUTH,
     DAYE_RESPONSE_PIN_CHANGE,
-    encode_daye_change_pin,
+    DAYE_RESPONSE_PIN_OR_AUTH,
     encode_bluekey_command,
+    encode_daye_change_pin,
     encode_daye_command,
 )
-from pygrouw.const import DEFAULT_REQUESTED_MTU
 
 
 def test_drain_queue_discards_stale_notifications() -> None:
@@ -67,9 +68,7 @@ def test_wait_for_response_skips_unexpected_notifications() -> None:
     """The BLE client waits for the expected DYM command byte."""
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-            "AA:BB:CC:DD:EE:FF", "Test mower"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
         client._tx_id = 1
         queue: asyncio.Queue[dict[str, int]] = asyncio.Queue()
         queue.put_nowait({"cmd": 0x80})
@@ -91,9 +90,7 @@ def test_wait_for_response_uses_single_deadline() -> None:
     """Unexpected notifications must not extend the overall response timeout."""
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-            "AA:BB:CC:DD:EE:FF", "Test mower"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
         client._tx_id = 1
         queue: asyncio.Queue[dict[str, int]] = asyncio.Queue()
 
@@ -123,15 +120,11 @@ def test_write_with_log_maps_backend_timeout_to_gatt_error() -> None:
     """Backend write timeouts are surfaced as GATT failures."""
 
     class _Client:
-        async def write_gatt_char(
-            self, _uuid: str, _payload: bytes, *, response: bool
-        ) -> None:
+        async def write_gatt_char(self, _uuid: str, _payload: bytes, *, response: bool) -> None:
             raise TimeoutError("write timed out")
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-            "AA:BB:CC:DD:EE:FF", "Test mower"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
         client._tx_id = 1
 
         with pytest.raises(GrouwBleGattError, match="GATT write failed"):
@@ -168,9 +161,7 @@ def test_client_requests_are_serialized() -> None:
     """Direct BLE client requests cannot overlap for the same client."""
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-            "AA:BB:CC:DD:EE:FF", "Test mower"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
 
         class Tracker:
             active = 0
@@ -209,9 +200,7 @@ def test_client_requests_are_serialized() -> None:
 
 def test_verify_auth_response_accepts_matching_configured_pin() -> None:
     """A configured PIN is checked against the mower auth response."""
-    client = GrouwBleMowerClient(
-        "AA:BB:CC:DD:EE:FF", "Test mower", pin="1234"
-    )
+    client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower", pin="1234")
     client._tx_id = 1
 
     client._verify_auth_response({"cmd": DAYE_RESPONSE_PIN_OR_AUTH, "mower_pin": "1234"})
@@ -221,9 +210,7 @@ def test_status_poll_skips_auth_prelude_to_avoid_beep() -> None:
     """Normal status polling uses the quiet unauthenticated DYM status request."""
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-            "AA:BB:CC:DD:EE:FF", "Test mower", pin="1234"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower", pin="1234")
         seen: dict[str, object] = {}
 
         async def fake_request(
@@ -269,9 +256,7 @@ def test_commands_skip_auth_prelude_and_follow_up_with_status() -> None:
     """Control commands skip the audible auth prelude and then poll status."""
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-            "AA:BB:CC:DD:EE:FF", "Test mower", pin="1234"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower", pin="1234")
         seen: dict[str, object] = {}
 
         async def fake_request(
@@ -304,35 +289,25 @@ def test_commands_skip_auth_prelude_and_follow_up_with_status() -> None:
 
 def test_verify_auth_response_requires_configured_pin() -> None:
     """Authenticated requests require a configured mower PIN."""
-    client = GrouwBleMowerClient(
-        "AA:BB:CC:DD:EE:FF", "Test mower", pin=""
-    )
+    client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower", pin="")
     client._tx_id = 1
 
     with pytest.raises(GrouwBleAuthenticationError, match="PIN is required"):
-        client._verify_auth_response(
-            {"cmd": DAYE_RESPONSE_PIN_OR_AUTH, "mower_pin": "1234"}
-        )
+        client._verify_auth_response({"cmd": DAYE_RESPONSE_PIN_OR_AUTH, "mower_pin": "1234"})
 
 
 def test_verify_auth_response_rejects_mismatched_configured_pin() -> None:
     """A wrong configured PIN fails before command payloads are sent."""
-    client = GrouwBleMowerClient(
-        "AA:BB:CC:DD:EE:FF", "Test mower", pin="9999"
-    )
+    client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower", pin="9999")
     client._tx_id = 1
 
     with pytest.raises(GrouwBleAuthenticationError, match="does not match"):
-        client._verify_auth_response(
-            {"cmd": DAYE_RESPONSE_PIN_OR_AUTH, "mower_pin": "1234"}
-        )
+        client._verify_auth_response({"cmd": DAYE_RESPONSE_PIN_OR_AUTH, "mower_pin": "1234"})
 
 
 def test_verify_auth_response_requires_pin_data_when_pin_is_configured() -> None:
     """Missing auth PIN data is a protocol/read issue, not a proven PIN mismatch."""
-    client = GrouwBleMowerClient(
-        "AA:BB:CC:DD:EE:FF", "Test mower", pin="1234"
-    )
+    client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower", pin="1234")
     client._tx_id = 1
 
     with pytest.raises(GrouwBleError, match="did not include PIN") as exc_info:
@@ -343,9 +318,7 @@ def test_verify_auth_response_requires_pin_data_when_pin_is_configured() -> None
 
 def test_verify_auth_response_pin_rejects_empty_explicit_pin() -> None:
     """Explicit empty auth pins must fail instead of falling back to client.pin."""
-    client = GrouwBleMowerClient(
-        "AA:BB:CC:DD:EE:FF", "Test mower", pin="1234"
-    )
+    client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower", pin="1234")
     client._tx_id = 1
 
     with pytest.raises(GrouwBleAuthenticationError, match="PIN is required"):
@@ -359,9 +332,7 @@ def test_change_pin_uses_old_pin_for_single_session_verification() -> None:
     """PIN changes authenticate with the old PIN and verify in the same session."""
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-            "AA:BB:CC:DD:EE:FF", "Test mower", pin="9999"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower", pin="9999")
         seen: dict[str, object] = {}
 
         async def fake_multi_request(
@@ -417,9 +388,7 @@ def test_request_mtu_with_log_calls_supported_client() -> None:
             return mtu
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-                "AA:BB:CC:DD:EE:FF", "Test mower"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
         client._tx_id = 1
         ble_client = _Client()
 
@@ -438,9 +407,7 @@ def test_request_mtu_with_log_ignores_unsupported_client() -> None:
         mtu_size = 23
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-                "AA:BB:CC:DD:EE:FF", "Test mower"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
         client._tx_id = 1
 
         await client._request_mtu_with_log(_Client())  # type: ignore[arg-type]
@@ -452,9 +419,7 @@ def test_raw_payload_accepts_hex_expected_command_and_string_auth_flag() -> None
     """Raw service options support hex command strings and string booleans."""
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-                "AA:BB:CC:DD:EE:FF", "Test mower"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
         seen: dict[str, object] = {}
 
         async def fake_request(
@@ -492,9 +457,7 @@ def test_raw_payload_bluekey_defaults_to_any_parsed_response() -> None:
     """BlueKey probes do not default to the DYM status response command."""
 
     async def run() -> None:
-        client = GrouwBleMowerClient(
-                "AA:BB:CC:DD:EE:FF", "Test mower"
-        )
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
         seen: dict[str, object] = {}
 
         async def fake_request(
@@ -528,8 +491,8 @@ def test_from_discovery_raises_when_address_is_not_found(
     """The convenience factory must not return an unusable client."""
 
     async def run() -> None:
-        import pygrouw.discovery as discovery
         from pygrouw.client import GrouwBleDeviceNotFound
+        import pygrouw.discovery as discovery
 
         async def find_none(*args: object, **kwargs: object) -> None:
             return None

@@ -1,10 +1,12 @@
 """BLE framing and parsing for Grouw mower devices."""
+
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import logging
-from typing import Any, Iterable
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,18 +20,10 @@ BLUEKEY_LENGTH = 48
 BLUEKEY_TRAILER_VALUES = (44, 12, 2, 510, 20)
 BLUEKEY_TRAILER_START = 19
 
-DAYE_STATUS_REQUEST = bytes.fromhex(
-    "44594d00111111111111111100000000000000160601ff0a"
-)
-DAYE_START_MOWING = bytes.fromhex(
-    "44594d01020000000000000000000000000000160601ff0a"
-)
-DAYE_RESUME_MOWING = bytes.fromhex(
-    "44594d01000000000000000000000000000000160601ff0a"
-)
-DAYE_PAUSE_MOWING = bytes.fromhex(
-    "44594d01010000000000000000000000000000160601ff0a"
-)
+DAYE_STATUS_REQUEST = bytes.fromhex("44594d00111111111111111100000000000000160601ff0a")
+DAYE_START_MOWING = bytes.fromhex("44594d01020000000000000000000000000000160601ff0a")
+DAYE_RESUME_MOWING = bytes.fromhex("44594d01000000000000000000000000000000160601ff0a")
+DAYE_PAUSE_MOWING = bytes.fromhex("44594d01010000000000000000000000000000160601ff0a")
 DAYE_DOCK = bytes.fromhex("44594d01030000000000000000000000000000160601ff0a")
 DAYE_AUTH_QUERY = bytes.fromhex("44594d0c000000000000000000000000000000160601ff0a")
 
@@ -45,7 +39,9 @@ DAYE_MOWER_SETTINGS_WRITE = 0x09
 DAYE_MOWER_SETTINGS_QUERY = 0x19
 DAYE_RESPONSE_MOWER_SETTINGS = 0x89
 
-DAYE_MOWER_SETTINGS_QUERY_PAYLOAD = bytes.fromhex("44594d19000000000000000000000000000000160601ff0a")
+DAYE_MOWER_SETTINGS_QUERY_PAYLOAD = bytes.fromhex(
+    "44594d19000000000000000000000000000000160601ff0a"
+)
 
 DAYE_WORK_TIME_START_WRITE = 0x04
 DAYE_WORK_TIME_DURATION_WRITE = 0x05
@@ -160,10 +156,9 @@ def encode_bluekey_payload(sub_cmd: int, data: Iterable[int] = ()) -> bytes:
     values = [0] * BLUEKEY_LENGTH
     values[0:4] = [*BLUEKEY_PREFIX, sub_cmd]
     values[4 : 4 + len(data_values)] = data_values
-    values[
-        BLUEKEY_TRAILER_START : BLUEKEY_TRAILER_START
-        + len(BLUEKEY_TRAILER_VALUES)
-    ] = BLUEKEY_TRAILER_VALUES
+    values[BLUEKEY_TRAILER_START : BLUEKEY_TRAILER_START + len(BLUEKEY_TRAILER_VALUES)] = (
+        BLUEKEY_TRAILER_VALUES
+    )
     return bytes(_bluekey_wire_byte(value) for value in values)
 
 
@@ -428,11 +423,7 @@ def _parse_bluekey_payload(
         return None
 
     sub_cmd = payload[3] if len(payload) > 3 else None
-    context = (
-        _normalize_bluekey_command_name(bluekey_context)
-        if bluekey_context
-        else None
-    )
+    context = _normalize_bluekey_command_name(bluekey_context) if bluekey_context else None
     command_name = context or (
         BLUEKEY_SUB_COMMAND_NAMES.get(sub_cmd) if sub_cmd is not None else None
     )
@@ -448,8 +439,7 @@ def _parse_bluekey_payload(
         message[f"byte{index}"] = str(value)
     if len(payload) >= BLUEKEY_TRAILER_START + len(BLUEKEY_TRAILER_VALUES):
         message["bluekey_trailer_hex"] = payload[
-            BLUEKEY_TRAILER_START : BLUEKEY_TRAILER_START
-            + len(BLUEKEY_TRAILER_VALUES)
+            BLUEKEY_TRAILER_START : BLUEKEY_TRAILER_START + len(BLUEKEY_TRAILER_VALUES)
         ].hex()
 
     if command_name == "query_pin" and len(payload) >= 8:
@@ -624,7 +614,7 @@ def state_from_message(
     updates: dict[str, Any] = {
         "raw": redact_daye_message(message),
         "last_response_cmd": cmd,
-        "last_seen": datetime.now(timezone.utc),
+        "last_seen": datetime.now(UTC),
     }
 
     for src, dst in (
