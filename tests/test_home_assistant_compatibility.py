@@ -1,4 +1,5 @@
 """Compatibility checks for behavior used by the Home Assistant integration."""
+
 from __future__ import annotations
 
 from pygrouw.const import (
@@ -49,7 +50,7 @@ def test_lawn_mower_mode_constants_match_home_assistant_activity_mapping() -> No
     """Mode bytes used by HA lawn mower activity mapping remain stable."""
     assert DAYE_MODE_MOWING == 0x00
     assert DAYE_MODE_MOWING_ALTERNATE == 0x01
-    assert DAYE_MOWING_MODE_CODES == frozenset({0x00, 0x01})
+    assert frozenset({0x00, 0x01}) == DAYE_MOWING_MODE_CODES
     assert DAYE_MODE_RETURNING == 0x03
     assert DAYE_MODE_IDLE == 0x14
 

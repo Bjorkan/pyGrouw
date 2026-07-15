@@ -1,4 +1,5 @@
 """Tests for BLE discovery helpers."""
+
 from __future__ import annotations
 
 import asyncio

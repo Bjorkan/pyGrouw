@@ -1,0 +1,47 @@
+name: autofix.ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autofix-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  autofix:
+    name: Apply Ruff fixes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+          cache-suffix: autofix
+
+      - name: Sync Ruff
+        run: uv sync --locked --only-group dev
+
+      - name: Apply Ruff lint fixes
+        run: uv run --no-sync ruff check . --fix --exit-zero
+
+      - name: Format with Ruff
+        run: uv run --no-sync ruff format .
+
+      - name: Apply autofixes
+        uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a
