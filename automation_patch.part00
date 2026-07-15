@@ -1,0 +1,248 @@
+diff --git a/README.md b/README.md
+index b25591d..b19aa9a 100644
+--- a/README.md
++++ b/README.md
+@@ -15,22 +15,25 @@ the Daye Power APK and redacted real-hardware captures.
+ Durable protocol and reverse-engineering notes live in
+ [reverse_engineered/index.md](reverse_engineered/index.md).
+ 
+-Supported protocol helpers:
+-
+-- DYM status, start/resume, pause/stop, dock, session start, and auth query
+-  payload encoding.
+-- DYM status and auth/PIN notification parsing.
+-- APK-shaped BlueKey debug payload encoding and parsing helpers for protocol
+-  research.
+-- Optional BLE discovery helpers that match the Home Assistant integration's
+-  supported name/service UUID filters.
+-- Serialized BLE request flow using `bleak` and `bleak-retry-connector`.
+-
+-Not yet supported:
+-
+-- Cloud or Wi-Fi control.
+-- Settings writes for rain, schedules, multi-area, PIN change, or firmware
+-  update.
++Supported and experimental capabilities:
++
++| Feature | Read | Write | Evidence | Stability |
++| --- | --- | --- | --- | --- |
++| Status, battery, mode, station | Yes | N/A | Hardware capture | Supported |
++| Start, resume, pause, dock | Status follow-up | Yes | Hardware capture | Experimental; transport completion is not physical-state confirmation |
++| Multi-area settings | Yes | Yes | Hardware capture | Experimental; writes use read-back verification |
++| Mower settings | Yes | Yes | Partial hardware capture | Experimental; omitted unknown fields are preserved |
++| Weekly work times | Yes | Yes | Hardware capture | Experimental; writes follow captured 300 ms spacing |
++| PIN change | Yes | Yes | Hardware capture | Experimental; interrupted verification can leave an indeterminate result |
++| BlueKey helpers | Research only | Research only | APK-derived | Debug/reverse-engineering only |
++| Firmware update | No | No | Unknown | Unsupported |
++| Cloud or Wi-Fi control | No | No | Not applicable | Unsupported |
++
++All BLE requests are serialized. A completed GATT write or a later status response
++proves communication, but does not by itself prove that a physical mower action has
++completed. `async_command_result()` exposes this distinction explicitly. Multi-step
++writes may raise `GrouwBleOperationIndeterminate` when an earlier step could already
++have changed the mower; callers should read back state before retrying.
+ 
+ ## Installation For Development
+ 
+diff --git a/src/pygrouw/__init__.py b/src/pygrouw/__init__.py
+index ca9cad0..0719f0c 100644
+--- a/src/pygrouw/__init__.py
++++ b/src/pygrouw/__init__.py
+@@ -1,7 +1,7 @@
+ """Python BLE library for Grouw robotic mowers."""
+ from __future__ import annotations
+ 
+-from .client import GrouwBleMowerClient
++from .client import GrouwBleMowerClient, GrouwCommandResult
+ from .discovery import (
+     DiscoveredMower,
+     discover_devices,
+@@ -18,7 +18,9 @@ from .exceptions import (
+     GrouwBleDeviceNotFound,
+     GrouwBleError,
+     GrouwBleGattError,
++    GrouwBleOperationIndeterminate,
+     GrouwBleTimeout,
++    GrouwBleVerificationError,
+ )
+ from .mower import GrouwMower
+ from .protocol import (
+@@ -41,7 +43,10 @@ __all__ = [
+     "GrouwBleError",
+     "GrouwBleGattError",
+     "GrouwBleMowerClient",
++    "GrouwBleOperationIndeterminate",
+     "GrouwBleTimeout",
++    "GrouwBleVerificationError",
++    "GrouwCommandResult",
+     "GrouwMower",
+     "DiscoveredMower",
+     "MowerState",
+diff --git a/src/pygrouw/client.py b/src/pygrouw/client.py
+index b77c590..c9548bb 100644
+--- a/src/pygrouw/client.py
++++ b/src/pygrouw/client.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ 
+ import asyncio
+ from collections.abc import Awaitable, Callable
++from dataclasses import dataclass
+ import inspect
+ import logging
+ from typing import Any, TypeAlias
+@@ -14,6 +15,8 @@ from bleak_retry_connector import establish_connection
+ from .const import (
+     DEFAULT_BLE_TIMEOUT,
+     DEFAULT_CHUNK_DELAY,
++    DAYE_SETTINGS_VERIFY_DELAY,
++    DAYE_WORK_TIME_INTER_WRITE_DELAY,
+     DEFAULT_NAME,
+     DEFAULT_REQUESTED_MTU,
+     READ_CHARACTERISTIC_UUID,
+@@ -25,7 +28,9 @@ from .exceptions import (
+     GrouwBleDeviceNotFound,
+     GrouwBleError,
+     GrouwBleGattError,
++    GrouwBleOperationIndeterminate,
+     GrouwBleTimeout,
++    GrouwBleVerificationError,
+ )
+ from .protocol import (
+     BLUEKEY_PREFIX,
+@@ -59,6 +64,20 @@ BLE_BACKEND_EXCEPTIONS = (BleakError, TimeoutError, OSError)
+ DeviceProvider: TypeAlias = Callable[[], BLEDevice | None | Awaitable[BLEDevice | None]]
+ 
+ 
++@dataclass(slots=True, frozen=True)
++class GrouwCommandResult:
++    """Transport result for a mower control command.
++
++    A returned status packet proves communication after the write, but not that
++    the requested physical state transition has completed.
++    """
++
++    command: str
++    status: dict[str, Any]
++    write_completed: bool = True
++    confirmed: bool = False
++
++
+ def _drain_queue(queue: asyncio.Queue[Any]) -> None:
+     """Discard all items currently in the queue."""
+     while not queue.empty():
+@@ -327,6 +346,43 @@ class GrouwBleMowerClient:
+                 self.address, self._tx_id, cmd, phase, expected_cmd
+             )
+ 
++    async def _wait_for_required_responses(
++        self,
++        queue: asyncio.Queue[dict[str, Any]],
++        required_cmds: set[int],
++        timeout: float,
++        phase: str,
++    ) -> list[dict[str, Any]]:
++        """Wait for one valid response for every required command."""
++        deadline = asyncio.get_running_loop().time() + timeout
++        received: dict[int, dict[str, Any]] = {}
++        while missing := required_cmds - received.keys():
++            remaining = deadline - asyncio.get_running_loop().time()
++            if remaining <= 0:
++                raise GrouwBleTimeout(
++                    f"Timeout waiting for {phase} responses {sorted(missing)} "
++                    f"from {self.address}"
++                )
++            try:
++                message = await asyncio.wait_for(queue.get(), timeout=remaining)
++            except asyncio.TimeoutError as err:
++                raise GrouwBleTimeout(
++                    f"Timeout waiting for {phase} responses {sorted(missing)} "
++                    f"from {self.address}"
++                ) from err
++            cmd = message.get("cmd")
++            if cmd in required_cmds:
++                received[int(cmd)] = message
++            else:
++                _LOGGER.debug(
++                    "[%s tx=%s] ignoring notification cmd=%s in %s",
++                    self.address,
++                    self._tx_id,
++                    cmd,
++                    phase,
++                )
++        return [received[command] for command in sorted(required_cmds)]
++
+     def _verify_auth_response_pin(self, message: dict[str, Any], pin: str) -> None:
+         """Verify a PIN against the mower auth/PIN response."""
+         if not pin:
+@@ -513,14 +569,20 @@ class GrouwBleMowerClient:
+             command_name="status",
+         )
+ 
+-    async def async_command(self, command: str) -> dict[str, Any]:
+-        """Send a quiet Daye mower command and refresh status."""
+-        return await self.async_request_daye(
++    async def async_command_result(self, command: str) -> GrouwCommandResult:
++        """Write a quiet command and return an explicitly unconfirmed result."""
++        status = await self.async_request_daye(
+             encode_daye_command(command),
+             authenticate=False,
+             follow_up_status=True,
+             command_name=command,
+         )
++        assert status is not None
++        return GrouwCommandResult(command=command, status=status)
++
++    async def async_command(self, command: str) -> dict[str, Any]:
++        """Write a mower command and return its unconfirmed follow-up status."""
++        return (await self.async_command_result(command)).status
+ 
+     async def async_change_pin(
+         self,
+@@ -592,6 +654,9 @@ class GrouwBleMowerClient:
+         client: BleakClient | None = None
+         notify_started = False
+         responses: list[Any] = []
++        completed_steps: list[str] = []
++        active_step: str | None = None
++        write_started = False
+         try:
+             client = await self._establish_connection(timeout)
+             await self._request_mtu_with_log(client)
+@@ -612,19 +677,33 @@ class GrouwBleMowerClient:
+                 _drain_queue(queue)
+ 
+             for payload, expected_cmd, delay, command_name, collect_count in steps:
++                active_step = command_name
++                write_started = False
+                 if delay > 0:
+                     await asyncio.sleep(delay)
++                write_started = True
+                 await self._write_with_log(client, payload, command_name)
++                completed_steps.append(command_name)
++                write_started = False
+                 if collect_count > 0:
+-                    collected: list[dict[str, Any]] = []
+-                    for _ in range(collect_count):
+-                        response = await self._wait_for_response(
+-                            queue, expected_cmd, timeout, command_name,
++                    if isinstance(expected_cmd, set) and collect_count > 1:
++                        collected = await self._wait_for_required_responses(
++                            queue,
++                            expected_cmd,
++                            timeout,
++                            command_name,
+                         )
+-                        collected.append(response)
++                    else:
++                        collected = [
++                            await self._wait_for_response(
++                                queue, expected_cmd, timeout, command_name,
++                            )
++                            for _ in range(collect_count)
++                        ]
+                     responses.append(collected if collect_count > 1 else collected[0])
+                 else:
+                     responses.append(None)
++                active_step = None
+ 
+            
