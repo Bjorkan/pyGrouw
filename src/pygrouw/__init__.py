@@ -1,7 +1,7 @@
 """Python BLE library for Grouw robotic mowers."""
 from __future__ import annotations
 
-from .client import GrouwBleMowerClient
+from .client import GrouwBleMowerClient, GrouwCommandResult
 from .discovery import (
     DiscoveredMower,
     discover_devices,
@@ -18,7 +18,9 @@ from .exceptions import (
     GrouwBleDeviceNotFound,
     GrouwBleError,
     GrouwBleGattError,
+    GrouwBleOperationIndeterminate,
     GrouwBleTimeout,
+    GrouwBleVerificationError,
 )
 from .mower import GrouwMower
 from .protocol import (
@@ -41,7 +43,10 @@ __all__ = [
     "GrouwBleError",
     "GrouwBleGattError",
     "GrouwBleMowerClient",
+    "GrouwBleOperationIndeterminate",
     "GrouwBleTimeout",
+    "GrouwBleVerificationError",
+    "GrouwCommandResult",
     "GrouwMower",
     "DiscoveredMower",
     "MowerState",

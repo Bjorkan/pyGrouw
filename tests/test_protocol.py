@@ -220,6 +220,7 @@ def test_encode_daye_mower_settings_matches_captured_payloads() -> None:
         helix=True,
         rain_delay_hours=4,
         rain_delay_minutes=13,
+        unknown_setting=False,
     )
     assert payload.hex() == "44594d0901000001040d000000000000000000160601ff0a"
 
@@ -229,6 +230,7 @@ def test_encode_daye_mower_settings_matches_captured_payloads() -> None:
         helix=False,
         rain_delay_hours=0,
         rain_delay_minutes=0,
+        unknown_setting=False,
     )
     assert payload.hex() == "44594d09000000000000000000000000000000160601ff0a"
 
@@ -252,11 +254,13 @@ def test_encode_daye_mower_settings_validates_ranges() -> None:
         encode_daye_mower_settings(
             mow_in_rain=False, boundary_cut=False, helix=False,
             rain_delay_hours=24, rain_delay_minutes=0,
+            unknown_setting=False,
         )
     with pytest.raises(ValueError, match="rain_delay_minutes"):
         encode_daye_mower_settings(
             mow_in_rain=False, boundary_cut=False, helix=False,
             rain_delay_hours=0, rain_delay_minutes=60,
+            unknown_setting=False,
         )
 
 

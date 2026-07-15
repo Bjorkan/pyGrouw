@@ -76,8 +76,11 @@ class GrouwMower:
         """Return the mower to the charging station."""
         return await self.async_command("dock")
 
-    async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async def async_send_raw_json(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Send a raw debug payload and update state when status fields exist."""
         message = await self.client.async_send_raw_json(payload)
-        self.state = state_from_message(self.client.address, message, self.state)
+        if message is not None:
+            self.state = state_from_message(self.client.address, message, self.state)
         return message

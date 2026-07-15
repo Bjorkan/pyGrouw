@@ -15,22 +15,25 @@ the Daye Power APK and redacted real-hardware captures.
 Durable protocol and reverse-engineering notes live in
 [reverse_engineered/index.md](reverse_engineered/index.md).
 
-Supported protocol helpers:
+Supported and experimental capabilities:
 
-- DYM status, start/resume, pause/stop, dock, session start, and auth query
-  payload encoding.
-- DYM status and auth/PIN notification parsing.
-- APK-shaped BlueKey debug payload encoding and parsing helpers for protocol
-  research.
-- Optional BLE discovery helpers that match the Home Assistant integration's
-  supported name/service UUID filters.
-- Serialized BLE request flow using `bleak` and `bleak-retry-connector`.
+| Feature | Read | Write | Evidence | Stability |
+| --- | --- | --- | --- | --- |
+| Status, battery, mode, station | Yes | N/A | Hardware capture | Supported |
+| Start, resume, pause, dock | Status follow-up | Yes | Hardware capture | Experimental; transport completion is not physical-state confirmation |
+| Multi-area settings | Yes | Yes | Hardware capture | Experimental; writes use read-back verification |
+| Mower settings | Yes | Yes | Partial hardware capture | Experimental; omitted unknown fields are preserved |
+| Weekly work times | Yes | Yes | Hardware capture | Experimental; writes follow captured 300 ms spacing |
+| PIN change | Yes | Yes | Hardware capture | Experimental; interrupted verification can leave an indeterminate result |
+| BlueKey helpers | Research only | Research only | APK-derived | Debug/reverse-engineering only |
+| Firmware update | No | No | Unknown | Unsupported |
+| Cloud or Wi-Fi control | No | No | Not applicable | Unsupported |
 
-Not yet supported:
-
-- Cloud or Wi-Fi control.
-- Settings writes for rain, schedules, multi-area, PIN change, or firmware
-  update.
+All BLE requests are serialized. A completed GATT write or a later status response
+proves communication, but does not by itself prove that a physical mower action has
+completed. `async_command_result()` exposes this distinction explicitly. Multi-step
+writes may raise `GrouwBleOperationIndeterminate` when an earlier step could already
+have changed the mower; callers should read back state before retrying.
 
 ## Installation For Development
 
