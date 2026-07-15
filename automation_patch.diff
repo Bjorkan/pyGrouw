@@ -1,0 +1,393 @@
+diff --git a/src/pygrouw/__init__.py b/src/pygrouw/__init__.py
+index 9c5c080..ca9cad0 100644
+--- a/src/pygrouw/__init__.py
++++ b/src/pygrouw/__init__.py
+@@ -30,6 +30,7 @@ from .protocol import (
+     encode_raw_payload,
+     parse_daye_payload,
+     redact_daye_message,
++    redact_daye_payload,
+     state_from_message,
+ )
+ 
+@@ -58,5 +59,6 @@ __all__ = [
+     "normalize_address",
+     "parse_daye_payload",
+     "redact_daye_message",
++    "redact_daye_payload",
+     "state_from_message",
+ ]
+diff --git a/src/pygrouw/client.py b/src/pygrouw/client.py
+index 02d9d19..b77c590 100644
+--- a/src/pygrouw/client.py
++++ b/src/pygrouw/client.py
+@@ -50,6 +50,7 @@ from .protocol import (
+     encode_raw_payload,
+     parse_daye_payload,
+     redact_daye_message,
++    redact_daye_payload,
+ )
+ 
+ _LOGGER = logging.getLogger(__name__)
+@@ -232,7 +233,7 @@ class GrouwBleMowerClient:
+             )
+             _LOGGER.debug(
+                 "[%s tx=%s] write %s ok payload=%s",
+-                self.address, self._tx_id, label, payload.hex()
++                self.address, self._tx_id, label, redact_daye_payload(payload)
+             )
+         except BLE_BACKEND_EXCEPTIONS as err:
+             _LOGGER.error(
+diff --git a/src/pygrouw/protocol.py b/src/pygrouw/protocol.py
+index 2e2496e..0227e9f 100644
+--- a/src/pygrouw/protocol.py
++++ b/src/pygrouw/protocol.py
+@@ -12,6 +12,7 @@ DYM_PREFIX = b"DYM"
+ DYM_TRAILER = bytes.fromhex("160601ff0a")
+ DYM_NOTIFICATION_TRAILER = bytes.fromhex("160601")
+ DYM_STATUS_NOTIFICATION_LENGTH = 22
++DYM_NOTIFICATION_LENGTH = 22
+ PIN_LENGTH = 4
+ BLUEKEY_PREFIX = bytes((0x88, 0xB2, 0x9A))
+ BLUEKEY_LENGTH = 48
+@@ -192,6 +193,33 @@ def redact_daye_message(message: dict[str, Any]) -> dict[str, Any]:
+     return redacted
+ 
+ 
++def redact_daye_payload(payload: bytes) -> str:
++    """Return a log-safe representation of an outbound protocol payload."""
++    raw_hex = payload.hex()
++    if payload.startswith(DYM_PREFIX) and len(payload) >= 12:
++        if payload[3] == DAYE_CHANGE_PIN:
++            return f"{raw_hex[:8]}****************{raw_hex[24:]}"
++    if payload.startswith(BLUEKEY_PREFIX) and len(payload) >= 4:
++        if payload[3] == BLUEKEY_CHANGE_PIN:
++            return f"{raw_hex[:8]}<redacted:{len(payload) - 4} bytes>"
++    return raw_hex
++
++
++def _valid_dym_notification(payload: bytes, command: int) -> bool:
++    """Return whether a known DYM notification has complete framing."""
++    return (
++        len(payload) == DYM_NOTIFICATION_LENGTH
++        and payload.startswith(DYM_PREFIX)
++        and payload[3] == command
++        and payload.endswith(DYM_NOTIFICATION_TRAILER)
++    )
++
++
++def _valid_bool_bytes(payload: bytes, indexes: Iterable[int]) -> bool:
++    """Return whether all selected protocol fields are encoded as 0 or 1."""
++    return all(payload[index] in (0, 1) for index in indexes)
++
++
+ def encode_daye_session_start(now: datetime | None = None) -> bytes:
+     """Return the Daye session/time payload sent after a fresh connection."""
+     current = now or datetime.now()
+@@ -512,7 +540,7 @@ def parse_daye_payload(
+     payload: bytes,
+     bluekey_context: str | None = None,
+ ) -> dict[str, Any] | None:
+-    """Parse a Daye DYM notification payload."""
++    """Parse a complete Daye notification payload."""
+     if not payload:
+         return None
+     bluekey_message = _parse_bluekey_payload(payload, bluekey_context)
+@@ -521,32 +549,56 @@ def parse_daye_payload(
+     if not payload.startswith(DYM_PREFIX):
+         _LOGGER.debug("Ignoring non-Daye BLE payload: %s", payload.hex())
+         return None
++    if len(payload) <= 3:
++        return None
++
++    command = payload[3]
++    known_commands = {
++        DAYE_RESPONSE_STATUS,
++        DAYE_RESPONSE_PIN_OR_AUTH,
++        DAYE_RESPONSE_PIN_CHANGE,
++        DAYE_RESPONSE_MULTI_AREA,
++        DAYE_RESPONSE_MOWER_SETTINGS,
++        DAYE_RESPONSE_WORK_TIME_START,
++        DAYE_RESPONSE_WORK_TIME_DURATION,
++    }
++    if command in known_commands and not _valid_dym_notification(payload, command):
++        _LOGGER.debug(
++            "Ignoring malformed DYM response cmd=0x%02x length=%s payload=%s",
++            command,
++            len(payload),
++            payload.hex(),
++        )
++        return None
+ 
+     message: dict[str, Any] = {
+         "raw_hex": payload.hex(),
+-        "cmd": payload[3] if len(payload) > 3 else None,
++        "cmd": command,
+     }
+     if payload.endswith(DYM_NOTIFICATION_TRAILER):
+         message["trailer"] = payload[-3:].hex()
+ 
+-    # Status notifications captured from the official app are 22 bytes.
+-    if (
+-        len(payload) == DYM_STATUS_NOTIFICATION_LENGTH
+-        and payload[3] == DAYE_RESPONSE_STATUS
+-        and payload.endswith(DYM_NOTIFICATION_TRAILER)
+-    ):
+-        message["battery_level"] = payload[4]
++    if command == DAYE_RESPONSE_STATUS:
++        battery_level = payload[4]
++        if 0 <= battery_level <= 100:
++            message["battery_level"] = battery_level
+         message["mode"] = payload[12]
+         if payload[7] in (0x00, 0x01):
+             message["station"] = payload[7] == 0x01
+-    elif len(payload) >= 8 and payload[3] == DAYE_RESPONSE_PIN_OR_AUTH:
++    elif command == DAYE_RESPONSE_PIN_OR_AUTH:
+         pin_bytes = payload[4:8]
+         if _looks_like_pin_digits(pin_bytes):
+             message["mower_pin"] = "".join(str(byte) for byte in pin_bytes)
+-    elif len(payload) >= 8 and payload[3] == DAYE_RESPONSE_PIN_CHANGE:
++    elif command == DAYE_RESPONSE_PIN_CHANGE:
+         message["pin_change_ack"] = True
+         message["pin_change_success"] = payload[4:19] == b"\x00" * 15
+-    elif len(payload) >= 12 and payload[3] == DAYE_RESPONSE_MULTI_AREA:
++    elif command == DAYE_RESPONSE_MULTI_AREA:
++        if (
++            payload[4] > 100
++            or payload[8] > 100
++            or any(value > 9 for value in (*payload[5:8], *payload[9:12]))
++        ):
++            return None
+         distance2 = payload[5] * 100 + payload[6] * 10 + payload[7]
+         distance3 = payload[9] * 100 + payload[10] * 10 + payload[11]
+         message["multi_area"] = {
+@@ -555,7 +607,11 @@ def parse_daye_payload(
+             "area3_percentage": payload[8],
+             "area3_distance": distance3,
+         }
+-    elif len(payload) >= 12 and payload[3] == DAYE_RESPONSE_MOWER_SETTINGS:
++    elif command == DAYE_RESPONSE_MOWER_SETTINGS:
++        if not _valid_bool_bytes(payload, (4, 5, 6, 7)):
++            return None
++        if payload[8] > 23 or payload[9] > 59:
++            return None
+         message["mower_settings"] = {
+             "mow_in_rain": payload[4] == 1,
+             "boundary_cut": payload[5] == 1,
+@@ -563,19 +619,32 @@ def parse_daye_payload(
+             "helix": payload[7] == 1,
+             "rain_delay_hour": payload[8],
+             "rain_delay_minute": payload[9],
+-            "led": payload[11] == 1,
+         }
+-    elif len(payload) >= 19 and payload[3] == DAYE_RESPONSE_WORK_TIME_START:
+-        days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
++    elif command == DAYE_RESPONSE_WORK_TIME_START:
++        hours = payload[4:11]
++        minutes = payload[11:18]
++        if any(hour > 23 for hour in hours) or any(minute > 59 for minute in minutes):
++            return None
++        days = (
++            "monday", "tuesday", "wednesday", "thursday",
++            "friday", "saturday", "sunday",
++        )
+         message["work_time_starts"] = [
+-            {"day": day, "hour": payload[4 + i], "minute": payload[11 + i]}
++            {"day": day, "hour": hours[i], "minute": minutes[i]}
+             for i, day in enumerate(days)
+         ]
+         message["work_time_reserved"] = payload[18]
+-    elif len(payload) >= 19 and payload[3] == DAYE_RESPONSE_WORK_TIME_DURATION:
+-        days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
++    elif command == DAYE_RESPONSE_WORK_TIME_DURATION:
++        hours = payload[4:11]
++        tenths = payload[11:18]
++        if any(hour > 23 for hour in hours) or any(tenth > 9 for tenth in tenths):
++            return None
++        days = (
++            "monday", "tuesday", "wednesday", "thursday",
++            "friday", "saturday", "sunday",
++        )
+         message["work_time_durations"] = [
+-            {"day": day, "hours": payload[4 + i], "tenths": payload[11 + i]}
++            {"day": day, "hours": hours[i], "tenths": tenths[i]}
+             for i, day in enumerate(days)
+         ]
+         message["work_time_reserved"] = payload[18]
+@@ -606,6 +675,7 @@ class MowerState:
+     station: bool | None = None
+     last_response_cmd: int | None = None
+     raw: dict[str, Any] | None = None
++    last_communication: datetime | None = None
+     last_seen: datetime | None = None
+ 
+     @property
+@@ -621,11 +691,16 @@ def state_from_message(
+     """Update a state object from a parsed Daye BLE message."""
+     base = previous or MowerState(address=address)
+     cmd = _optional_int(message, "cmd")
++    now = datetime.now(timezone.utc)
+     updates: dict[str, Any] = {
+         "raw": redact_daye_message(message),
+         "last_response_cmd": cmd,
+-        "last_seen": datetime.now(timezone.utc),
++        "last_communication": now,
+     }
++    if cmd == DAYE_RESPONSE_STATUS and any(
++        key in message for key in ("battery_level", "mode", "station")
++    ):
++        updates["last_seen"] = now
+ 
+     for src, dst in (
+         ("battery_level", "battery_level"),
+diff --git a/tests/test_protocol.py b/tests/test_protocol.py
+index b4c0b37..e64ae4e 100644
+--- a/tests/test_protocol.py
++++ b/tests/test_protocol.py
+@@ -23,6 +23,7 @@ from pygrouw.protocol import (
+     encode_raw_payload,
+     parse_daye_payload,
+     redact_daye_message,
++    redact_daye_payload,
+     state_from_message,
+ )
+ 
+@@ -103,23 +104,17 @@ def test_parse_daye_payload_ignores_non_dym_payload() -> None:
+ 
+ def test_parse_daye_payload_does_not_decode_short_status_payload() -> None:
+     """Only the captured 22-byte DYM status shape is decoded as state."""
+-    message = parse_daye_payload(bytes.fromhex("44594d806400160601"))
+-
+-    assert message == {
+-        "raw_hex": "44594d806400160601",
+-        "cmd": 0x80,
+-        "trailer": "160601",
+-    }
++    assert parse_daye_payload(bytes.fromhex("44594d806400160601")) is None
+ 
+ 
+ def test_parse_daye_auth_response_extracts_numeric_pin_digits() -> None:
+     """The auth/PIN response exposes the mower PIN as four digit bytes."""
+     message = parse_daye_payload(
+-        bytes.fromhex("44594d8c0102030400000000000000000000160601")
++        bytes.fromhex("44594d8c010203040000000000000000000000160601")
+     )
+ 
+     assert message == {
+-        "raw_hex": "44594d8c0102030400000000000000000000160601",
++        "raw_hex": "44594d8c010203040000000000000000000000160601",
+         "cmd": 0x8C,
+         "trailer": "160601",
+         "mower_pin": "1234",
+@@ -205,7 +200,7 @@ def test_parse_daye_multi_area_response() -> None:
+ def test_parse_daye_multi_area_response_non_zero_distance() -> None:
+     """Non-zero distances are correctly decoded from decimal-chunk bytes."""
+     message = parse_daye_payload(
+-        bytes.fromhex("44594d8d0501000110000704160601")
++        bytes.fromhex("44594d8d050100011000070400000000000000160601")
+     )
+ 
+     assert message is not None
+@@ -280,7 +275,6 @@ def test_parse_daye_mower_settings_response() -> None:
+         "helix": False,
+         "rain_delay_hour": 0,
+         "rain_delay_minute": 0,
+-        "led": False,
+     }
+ 
+ 
+@@ -344,14 +338,14 @@ def test_redact_daye_message_hides_pin_and_auth_pin_bytes() -> None:
+     """PIN values must not leak into diagnostics or normal debug logs."""
+     redacted = redact_daye_message(
+         {
+-            "raw_hex": "44594d8c0102030400000000000000000000160601",
++            "raw_hex": "44594d8c010203040000000000000000000000160601",
+             "cmd": 0x8C,
+             "mower_pin": "1234",
+         }
+     )
+ 
+     assert redacted == {
+-        "raw_hex": "44594d8c********00000000000000000000160601",
++        "raw_hex": "44594d8c********0000000000000000000000160601",
+         "cmd": 0x8C,
+         "mower_pin": "****",
+     }
+@@ -437,3 +431,77 @@ def test_state_from_message_maps_confirmed_dym_fields() -> None:
+     assert state.station is False
+     assert state.last_response_cmd == 0x80
+     assert state.last_seen is not None
++
++
++def test_known_dym_responses_require_complete_notification_framing() -> None:
++    """Truncated or incorrectly terminated known packets are ignored."""
++    assert parse_daye_payload(bytes.fromhex("44594d8c01020304")) is None
++    assert parse_daye_payload(bytes.fromhex("44594d8d0000000000000000")) is None
++    assert parse_daye_payload(
++        bytes.fromhex("44594d89000000000000000000000000000000ffffff")
++    ) is None
++
++
++def test_known_dym_fields_are_range_checked() -> None:
++    """Typed settings are not produced from impossible protocol values."""
++    assert parse_daye_payload(
++        bytes.fromhex("44594d8d650a00000000000000000000000000160601")
++    ) is None
++    assert parse_daye_payload(
++        bytes.fromhex("44594d89020000000000000000000000000000160601")
++    ) is None
++    assert parse_daye_payload(
++        bytes.fromhex("44594d84181818181818180000000000000000160601")
++    ) is None
++    assert parse_daye_payload(
++        bytes.fromhex("44594d85010101010101010a00000000000000160601")
++    ) is None
++
++
++def test_non_status_response_does_not_refresh_status_last_seen() -> None:
++    """Communication freshness and status freshness remain independent."""
++    previous = MowerState(address="AA:BB", battery_level=50)
++    state = state_from_message(
++        "AA:BB",
++        {"cmd": DAYE_RESPONSE_MOWER_SETTINGS, "mower_settings": {}},
++        previous,
++    )
++
++    assert state.last_communication is not None
++    assert state.last_seen is None
++    assert not state.available
++    assert state.battery_level == 50
++
++
++def test_status_response_refreshes_both_communication_and_status_timestamps() -> None:
++    """A validated status message remains the source of status availability."""
++    state = state_from_message(
++        "AA:BB",
++        {"cmd": 0x80, "battery_level": 75, "mode": 1, "station": False},
++    )
++
++    assert state.last_communication is not None
++    assert state.last_seen is not None
++    assert state.available
++
++
++def test_redact_daye_payload_masks_pin_change_writes() -> None:
++    """Both old and new PIN bytes are removed before outgoing debug logging."""
++    payload = bytes.fromhex(
++        "44594d06010203040506070800000000000000160601ff0a"
++    )
++    redacted = redact_daye_payload(payload)
++
++    assert "01020304" not in redacted
++    assert "05060708" not in redacted
++    assert redacted.startswith("44594d06****************")
++
++
++def test_dym_settings_do_not_infer_led_from_reserved_bytes() -> None:
++    """APK-only BlueKey fields are not promoted into captured DYM layouts."""
++    message = parse_daye_payload(
++        bytes.fromhex("44594d89000000000000000100000000000000160601")
++    )
++
++    assert message is not None
++    assert "led" not in message["mower_settings"]
