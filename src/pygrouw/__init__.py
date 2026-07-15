@@ -30,6 +30,7 @@ from .protocol import (
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
+    redact_daye_payload,
     state_from_message,
 )
 
@@ -58,5 +59,6 @@ __all__ = [
     "normalize_address",
     "parse_daye_payload",
     "redact_daye_message",
+    "redact_daye_payload",
     "state_from_message",
 ]
