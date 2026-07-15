@@ -8,36 +8,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  apply-command-settings-patch:
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/03-command-settings-final'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out PR branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-      - name: Apply and validate prepared patches
-        run: |
-          cat automation_patch.part00 automation_patch.part01 automation_patch.part02 > command-settings.patch
-          git apply command-settings.patch
-          rm automation_patch.part00 automation_patch.part01 automation_patch.part02 command-settings.patch automation_trigger
-          python -m pip install -e ".[test]"
-          python -m pytest -q
-          python -m compileall -q src tests
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: make command and settings outcomes explicit"
-          git push origin HEAD:${{ github.head_ref }}
-
   test:
     name: Test Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
