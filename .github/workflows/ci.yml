@@ -26,10 +26,9 @@ jobs:
           fetch-depth: 0
       - name: Apply and validate prepared patches
         run: |
-          git apply automation_patch.diff
           cat automation_patch.part00 automation_patch.part01 automation_patch.part02 > command-settings.patch
           git apply command-settings.patch
-          rm automation_patch.diff automation_patch.part00 automation_patch.part01 automation_patch.part02 command-settings.patch
+          rm automation_patch.part00 automation_patch.part01 automation_patch.part02 command-settings.patch
           python -m pip install -e ".[test]"
           python -m pytest -q
           python -m compileall -q src tests
