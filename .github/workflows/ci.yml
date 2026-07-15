@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   apply-prepared-patch:
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/02-protocol-integrity'
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/03-command-settings'
     runs-on: ubuntu-latest
     steps:
       - name: Check out branch
@@ -24,17 +24,19 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
-      - name: Apply and validate prepared patch
+      - name: Apply and validate prepared patches
         run: |
           git apply automation_patch.diff
-          rm automation_patch.diff
+          cat automation_patch.part00 automation_patch.part01 automation_patch.part02 > command-settings.patch
+          git apply command-settings.patch
+          rm automation_patch.diff automation_patch.part00 automation_patch.part01 automation_patch.part02 command-settings.patch
           python -m pip install -e ".[test]"
           python -m pytest -q
           python -m compileall -q src tests
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix: validate DYM frames and separate status freshness"
+          git commit -m "fix: make command and settings outcomes explicit"
           git push origin HEAD:${{ github.head_ref }}
 
   test:
