@@ -326,7 +326,7 @@ def encode_daye_mower_settings(
     rain_delay_hours: int,
     rain_delay_minutes: int,
     *,
-    unknown_setting: bool = False,
+    unknown_setting: bool,
 ) -> bytes:
     """Build a 24-byte DYM mower settings write payload (command 0x09)."""
     if not 0 <= rain_delay_hours <= 23:

@@ -648,3 +648,182 @@ def test_multi_step_path_preserves_connection_error_type(
             )
 
     asyncio.run(run())
+
+
+def test_required_responses_ignore_duplicates_until_all_commands_arrive() -> None:
+    """Schedule queries require one response of each command type."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB", "Test mower")
+        client._tx_id = 1
+        queue: asyncio.Queue[dict[str, int]] = asyncio.Queue()
+        queue.put_nowait({"cmd": 0x84, "value": 1})
+        queue.put_nowait({"cmd": 0x84, "value": 2})
+        queue.put_nowait({"cmd": 0x85, "value": 3})
+
+        responses = await client._wait_for_required_responses(
+            queue, {0x84, 0x85}, 0.1, "work_time"
+        )
+
+        assert [response["cmd"] for response in responses] == [0x84, 0x85]
+        assert responses[0]["value"] == 2
+
+    asyncio.run(run())
+
+
+def test_raw_write_only_mode_does_not_wait_for_notification() -> None:
+    """No-response protocol writes have an explicit transport mode."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB", "Test mower")
+        seen: dict[str, object] = {}
+
+        async def fake_request(payload: bytes, **kwargs: object) -> None:
+            seen["payload"] = payload
+            seen.update(kwargs)
+            return None
+
+        client.async_request_daye = fake_request  # type: ignore[method-assign]
+        response = await client.async_send_raw_json(
+            {
+                "raw_hex": "44594d04",
+                "response_mode": "write_only",
+                "authenticate": False,
+            }
+        )
+
+        assert response is None
+        assert seen["write_only"] is True
+        assert seen["follow_up_status"] is False
+        assert seen["expected_cmd"] is None
+
+    asyncio.run(run())
+
+
+def test_raw_response_mode_rejects_unknown_policy() -> None:
+    """Raw response semantics must not be inferred from an invalid option."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB", "Test mower")
+        with pytest.raises(GrouwBleError, match="response_mode"):
+            await client.async_send_raw_json(
+                {"raw_hex": "44594d04", "response_mode": "maybe"}
+            )
+
+    asyncio.run(run())
+
+
+def test_command_result_marks_status_as_unconfirmed() -> None:
+    """Transport success is distinct from physical action confirmation."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB", "Test mower")
+
+        async def fake_request(*args: object, **kwargs: object) -> dict[str, int]:
+            return {"cmd": 0x80, "mode": 0x14}
+
+        client.async_request_daye = fake_request  # type: ignore[method-assign]
+        result = await client.async_command_result("dock")
+
+        assert result.command == "dock"
+        assert result.write_completed
+        assert not result.confirmed
+        assert result.status["mode"] == 0x14
+
+    asyncio.run(run())
+
+
+def test_mower_settings_preserve_unknown_field_when_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Partial settings updates read and preserve unknown mower fields."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB", "Test mower")
+        seen: dict[str, object] = {}
+
+        async def fake_get() -> dict[str, object]:
+            return {"mower_settings": {"unknown_setting": True}}
+
+        async def fake_multi(
+            steps: list[tuple[bytes, int | None | set[int], float, str, int]],
+            **kwargs: object,
+        ) -> list[object]:
+            seen["steps"] = steps
+            return [None, {
+                "mower_settings": {
+                    "mow_in_rain": True,
+                    "boundary_cut": False,
+                    "unknown_setting": True,
+                    "helix": False,
+                    "rain_delay_hour": 1,
+                    "rain_delay_minute": 2,
+                }
+            }]
+
+        monkeypatch.setattr(client, "async_get_mower_settings", fake_get)
+        monkeypatch.setattr(client, "_async_request_daye_multi_locked", fake_multi)
+
+        await client.async_set_mower_settings(
+            mow_in_rain=True,
+            boundary_cut=False,
+            helix=False,
+            rain_delay_hours=1,
+            rain_delay_minutes=2,
+        )
+
+        steps = seen["steps"]
+        assert isinstance(steps, list)
+        assert steps[0][0][6] == 1
+
+    asyncio.run(run())
+
+
+def test_multi_step_failure_after_write_is_indeterminate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost verification response preserves completed step metadata."""
+
+    async def run() -> None:
+        from pygrouw.client import GrouwBleOperationIndeterminate
+
+        class _Client:
+            async def start_notify(self, *args: object) -> None:
+                return None
+
+            async def stop_notify(self, *args: object) -> None:
+                return None
+
+            async def disconnect(self) -> None:
+                return None
+
+        client = GrouwBleMowerClient("AA:BB", "Test mower")
+        monkeypatch.setattr(client, "_establish_connection", lambda timeout: None)
+
+        async def fake_establish(timeout: float) -> _Client:
+            return _Client()
+
+        async def fake_write(*args: object, **kwargs: object) -> None:
+            return None
+
+        async def fail_wait(*args: object, **kwargs: object) -> dict[str, int]:
+            raise GrouwBleTimeout("lost response")
+
+        monkeypatch.setattr(client, "_establish_connection", fake_establish)
+        monkeypatch.setattr(client, "_request_mtu_with_log", lambda client: _async_none())
+        monkeypatch.setattr(client, "_write_with_log", fake_write)
+        monkeypatch.setattr(client, "_wait_for_response", fail_wait)
+
+        with pytest.raises(GrouwBleOperationIndeterminate) as exc_info:
+            await client._async_request_daye_multi_locked(
+                [(b"DYM", 0x80, 0, "settings_write", 1)],
+                authenticate=False,
+            )
+
+        assert exc_info.value.completed_steps == ("settings_write",)
+        assert exc_info.value.failed_step == "settings_write"
+
+    async def _async_none() -> None:
+        return None
+
+    asyncio.run(run())
