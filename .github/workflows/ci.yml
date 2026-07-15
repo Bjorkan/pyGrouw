@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   apply-prepared-patch:
-    if: github.event_name == 'pull_request' && github.head_ref == 'fix/03-command-settings'
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/03-command-settings-final'
     runs-on: ubuntu-latest
     steps:
       - name: Check out branch
@@ -28,7 +28,7 @@ jobs:
         run: |
           cat automation_patch.part00 automation_patch.part01 automation_patch.part02 > command-settings.patch
           git apply command-settings.patch
-          rm automation_patch.part00 automation_patch.part01 automation_patch.part02 command-settings.patch
+          rm automation_patch.part00 automation_patch.part01 automation_patch.part02 command-settings.patch automation_trigger
           python -m pip install -e ".[test]"
           python -m pytest -q
           python -m compileall -q src tests
