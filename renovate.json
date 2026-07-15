@@ -1,55 +1,64 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    "abandonments:recommended",
+    "security:openssf-scorecard"
   ],
+  "enabledManagers": ["pep621", "github-actions"],
   "dependencyDashboard": true,
-  "labels": [
-    "dependencies"
-  ],
-  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "rangeStrategy": "replace",
+  "schedule": ["* 0-2 * * *"],
+  "timezone": "Europe/Stockholm",
+  "minimumReleaseAge": "14 days",
+  "internalChecksFilter": "strict",
+  "rebaseWhen": "conflicted",
+  "prConcurrentLimit": 3,
+  "branchConcurrentLimit": 3,
   "prHourlyLimit": 2,
-  "rangeStrategy": "bump",
-  "automerge": true,
   "automergeType": "pr",
   "platformAutomerge": true,
+  "ignoreTests": false,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true,
+    "schedule": ["before 3am on monday"]
+  },
   "packageRules": [
     {
-      "description": "Automerge low-risk Python dependency updates",
-      "matchManagers": [
-        "pep621",
-        "pip_requirements",
-        "pip_setup"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "pin",
-        "digest"
-      ],
-      "groupName": "python dependencies",
+      "description": "Pin Python development dependencies declared in dependency-groups",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["dependency-groups"],
+      "rangeStrategy": "pin",
+      "groupName": "Python development dependencies",
+      "groupSlug": "python-dev-dependencies",
+      "separateMajorMinor": true,
+      "separateMinorPatch": false
+    },
+    {
+      "description": "Group the setup-uv action and uv runtime updates",
+      "matchManagers": ["github-actions"],
+      "matchPackageNames": ["astral-sh/setup-uv", "astral-sh/uv"],
+      "groupName": "uv toolchain",
+      "groupSlug": "uv-toolchain"
+    },
+    {
+      "description": "Automerge non-major dependency updates after required checks pass",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
       "automerge": true
     },
     {
-      "description": "Automerge low-risk GitHub Actions updates",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "patch",
-        "pin",
-        "digest"
-      ],
-      "groupName": "github actions",
-      "automerge": true
-    },
-    {
-      "description": "Review major updates manually",
-      "matchUpdateTypes": [
-        "major"
-      ],
+      "description": "Require manual review for major dependency updates",
+      "matchUpdateTypes": ["major"],
       "automerge": false
+    },
+    {
+      "description": "Lock file maintenance cannot validate minimum release age",
+      "matchManagers": ["pep621"],
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "minimumReleaseAge": null
     }
   ]
 }
