@@ -1,20 +1,22 @@
 name: Apply prepared command patch
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/03-command-settings-final
+      - main
 
 permissions:
   contents: write
 
 jobs:
   apply-prepared-patch:
+    if: github.head_ref == 'fix/03-command-settings-final'
     runs-on: ubuntu-latest
     steps:
       - name: Check out branch
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
       - name: Apply and validate prepared patches
         run: |
@@ -29,4 +31,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "fix: make command and settings outcomes explicit"
-          git push origin HEAD:fix/03-command-settings-final
+          git push origin HEAD:${{ github.head_ref }}
