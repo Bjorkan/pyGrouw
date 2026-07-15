@@ -118,9 +118,7 @@ async def discover_devices(
                 devices.append(mower)
         return devices
 
-    for device in discoveries:
-        if mower := _discovered_mower(device):
-            devices.append(mower)
+    devices.extend(mower for device in discoveries if (mower := _discovered_mower(device)))
     return devices
 
 

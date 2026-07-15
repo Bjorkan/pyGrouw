@@ -495,11 +495,11 @@ class GrouwBleMowerClient:
                 if notify_started:
                     try:
                         await client.stop_notify(READ_CHARACTERISTIC_UUID)
-                    except Exception:  # noqa: BLE001 - cleanup must be best effort
+                    except Exception:  # noqa: BLE001, S110 - cleanup must be best effort
                         pass
                 try:
                     await client.disconnect()
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110
                     pass
                 _LOGGER.debug("[%s tx=%s] disconnected", self.address, self._tx_id)
 
@@ -647,11 +647,11 @@ class GrouwBleMowerClient:
                 if notify_started:
                     try:
                         await client.stop_notify(READ_CHARACTERISTIC_UUID)
-                    except Exception:
+                    except Exception:  # noqa: BLE001, S110
                         pass
                 try:
                     await client.disconnect()
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
 
     async def async_get_multi_area(self) -> dict[str, Any]:
