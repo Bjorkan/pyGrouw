@@ -26,18 +26,25 @@ Supported protocol helpers:
   supported name/service UUID filters.
 - Serialized BLE request flow using `bleak` and `bleak-retry-connector`.
 
+Additional protocol operations implemented in `GrouwBleMowerClient`:
+
+- Read and write multi-area settings.
+- Read and write mower settings including rain behavior and delay.
+- Read and write work time schedules.
+- Change the mower PIN (requires authenticated BLE access).
+
 Not yet supported:
 
 - Cloud or Wi-Fi control.
-- Settings writes for rain, schedules, multi-area, PIN change, or firmware
-  update.
+- Firmware update.
 
 ## Installation For Development
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python3 -m pip install -e ".[test]"
+python3 -m pip install -e .
+python3 -m pip install pytest
 pytest -q
 ```
 
@@ -48,7 +55,7 @@ to the client. Home Assistant integrations should use Home Assistant's
 Bluetooth manager and inject the resolved device.
 
 ```python
-from pygrouw import GrouwBleMower, GrouwBleMowerClient
+from pygrouw import GrouwMower, GrouwBleMowerClient
 
 client = GrouwBleMowerClient(
     address="AA:BB:CC:DD:EE:FF",
@@ -68,7 +75,7 @@ connectable `bleak.backends.device.BLEDevice` or `None`.
 For standalone scripts, the library also exposes optional discovery helpers:
 
 ```python
-from pygrouw import GrouwBleMower, GrouwBleMowerClient, discover_devices
+from pygrouw import GrouwMower, GrouwBleMowerClient, discover_devices
 
 devices = await discover_devices(timeout=5)
 client = await GrouwBleMowerClient.from_discovery(
