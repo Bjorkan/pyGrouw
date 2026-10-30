@@ -19,7 +19,14 @@ from .const import (
     DEFAULT_CHUNK_DELAY,
     DEFAULT_NAME,
     DEFAULT_REQUESTED_MTU,
+    FIRMWARE_REVISION_CHARACTERISTIC_UUID,
+    HARDWARE_REVISION_CHARACTERISTIC_UUID,
+    MANUFACTURER_NAME_CHARACTERISTIC_UUID,
+    MODEL_NUMBER_CHARACTERISTIC_UUID,
     READ_CHARACTERISTIC_UUID,
+    SERIAL_NUMBER_CHARACTERISTIC_UUID,
+    SOFTWARE_REVISION_CHARACTERISTIC_UUID,
+    SYSTEM_ID_CHARACTERISTIC_UUID,
     WRITE_CHARACTERISTIC_UUID,
 )
 from .exceptions import (
@@ -62,6 +69,16 @@ _LOGGER = logging.getLogger(__name__)
 BLE_BACKEND_EXCEPTIONS = (BleakError, TimeoutError, OSError)
 DeviceProvider: TypeAlias = Callable[[], BLEDevice | None | Awaitable[BLEDevice | None]]
 
+DEVICE_INFORMATION_CHARACTERISTICS = {
+    "manufacturer": MANUFACTURER_NAME_CHARACTERISTIC_UUID,
+    "model": MODEL_NUMBER_CHARACTERISTIC_UUID,
+    "serial": SERIAL_NUMBER_CHARACTERISTIC_UUID,
+    "hardware_revision": HARDWARE_REVISION_CHARACTERISTIC_UUID,
+    "firmware_version": FIRMWARE_REVISION_CHARACTERISTIC_UUID,
+    "software_revision": SOFTWARE_REVISION_CHARACTERISTIC_UUID,
+    "system_id": SYSTEM_ID_CHARACTERISTIC_UUID,
+}
+
 
 def _drain_queue(queue: asyncio.Queue[Any]) -> None:
     """Discard all items currently in the queue."""
@@ -97,6 +114,14 @@ def _coerce_expected_cmd(value: Any) -> int | None:
     if not 0 <= command <= 0xFF:
         raise GrouwBleError("expect_cmd must be between 0 and 255")
     return command
+
+
+def _decode_device_information_value(field: str, value: bytes | bytearray) -> str:
+    """Decode a Device Information Service characteristic without logging it."""
+    raw = bytes(value)
+    if field == "system_id":
+        return raw.hex()
+    return raw.rstrip(b"\x00").decode("utf-8", errors="replace").strip()
 
 
 class GrouwBleMowerClient:
@@ -252,18 +277,23 @@ class GrouwBleMowerClient:
     async def _request_mtu_with_log(self, client: BleakClient) -> None:
         """Best-effort MTU request matching the official app connection flow."""
         request_mtu = getattr(client, "request_mtu", None)
+        backend_fallback = False
         current_mtu = getattr(client, "mtu_size", "unknown")
         if request_mtu is None:
-            _LOGGER.debug(
-                "[%s tx=%s] MTU request unsupported (current_mtu=%s)",
-                self.address,
-                self._tx_id,
-                current_mtu,
-            )
-            return
+            backend = getattr(client, "_backend", None)
+            request_mtu = getattr(backend, "_acquire_mtu", None)
+            if request_mtu is None:
+                _LOGGER.debug(
+                    "[%s tx=%s] MTU request unsupported (current_mtu=%s)",
+                    self.address,
+                    self._tx_id,
+                    current_mtu,
+                )
+                return
+            backend_fallback = True
 
         try:
-            result = request_mtu(DEFAULT_REQUESTED_MTU)
+            result = request_mtu() if backend_fallback else request_mtu(DEFAULT_REQUESTED_MTU)
             if inspect.isawaitable(result):
                 result = await result
         except Exception as err:  # noqa: BLE001 - MTU support is backend-specific
@@ -284,6 +314,44 @@ class GrouwBleMowerClient:
             result,
             getattr(client, "mtu_size", "unknown"),
         )
+
+    async def async_get_device_information(
+        self,
+        timeout: float = DEFAULT_BLE_TIMEOUT,
+    ) -> dict[str, str]:
+        """Read standard mower identity and revision characteristics in one connection."""
+        async with self._request_lock:
+            self._tx_counter += 1
+            self._tx_id = self._tx_counter
+            client: BleakClient | None = None
+            information: dict[str, str] = {}
+            try:
+                client = await self._establish_connection(timeout)
+                await self._request_mtu_with_log(client)
+                for field, characteristic in DEVICE_INFORMATION_CHARACTERISTICS.items():
+                    try:
+                        value = await client.read_gatt_char(characteristic)
+                    except BLE_BACKEND_EXCEPTIONS as err:
+                        _LOGGER.debug(
+                            "[%s tx=%s] device information field %s unavailable: %s",
+                            self.address,
+                            self._tx_id,
+                            field,
+                            err,
+                        )
+                        continue
+                    information[field] = _decode_device_information_value(field, value)
+                if not information:
+                    raise GrouwBleGattError(
+                        f"Device Information Service could not be read on {self.address}"
+                    )
+                return information
+            finally:
+                if client is not None:
+                    try:
+                        await client.disconnect()
+                    except Exception:  # noqa: BLE001, S110 - cleanup must be best effort
+                        pass
 
     async def _wait_for_response(
         self,

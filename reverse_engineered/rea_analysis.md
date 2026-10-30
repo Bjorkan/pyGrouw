@@ -79,6 +79,28 @@ Evidence:
 REA did not cryptographically verify signatures, certificate trust, revocation,
 or authenticity. These are declared static identities, not a trust verdict.
 
+## Android BLE Plugin
+
+JADX coverage was complete for the 4,421 classes in the base APK. REA confirmed
+that the bundled FlutterBluePlus Android plugin serializes GATT operations,
+configures notification CCCDs, supports explicit MTU requests, and maps
+write-with-response to Android `WRITE_TYPE_DEFAULT`. Its normal write payload
+limit is `min(MTU - 3, 512)`.
+
+Evidence:
+
+- Android package summary:
+  `ev_c66dba46f8f5ec47f0b4d96a6572d469b4737995292b0ed780c37d6b8b9c8772`
+- FlutterBluePlus class:
+  `ev_2bf429d946abb28734c1f339e77e804d5c3d974ffeb076430675d4dcaa1d6b47`
+- complete `onMethodCall` body:
+  `ev_daaa86b5177cab2ab524b95936274ae6eed49507a8c7b3c97f69b8c9c515a773`
+- `getMaxPayload` body:
+  `ev_55ce174599cf2e9f2419ca8e7bb4b5c37cd6e211fccdfbffac770d3a3ef88741`
+
+This is static evidence for the plugin bundled in the official app, not a
+runtime trace of a particular mower interaction.
+
 ## Library Changes Informed By The Review
 
 The review was combined with the existing HCI-confirmed DYM packet shapes. The
@@ -93,7 +115,11 @@ library now:
 - uses the approximately 300 ms inter-write/settings verification delay seen in
   captures; and
 - preserves the unknown mower-setting bit by reading it before a partial
-  settings update.
+  settings update;
+- acquires the negotiated BlueZ MTU when Bleak exposes that backend operation;
+  and
+- reads the mower's HCI-confirmed standard Device Information characteristics
+  in a single connection.
 
 These are static-analysis and capture-informed implementation decisions. They
 do not claim that REA executed the app or observed mower runtime behavior.

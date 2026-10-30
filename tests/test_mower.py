@@ -34,6 +34,13 @@ class _Client:
             "station": False,
         }
 
+    async def async_get_device_information(self) -> dict[str, str]:
+        return {
+            "model": "DY123",
+            "serial": "private-serial",
+            "firmware_version": "1.2.3",
+        }
+
     async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.raw_payloads.append(payload)
         return {
@@ -89,6 +96,23 @@ def test_mower_command_helpers_update_state() -> None:
         assert mower.battery_level == 60
         assert mower.mode == 0x00
         assert mower.station is False
+
+    asyncio.run(run())
+
+
+def test_mower_updates_standard_device_information() -> None:
+    """Standard GATT identity fields populate the existing mower state."""
+
+    async def run() -> None:
+        mower = GrouwMower(_Client())  # type: ignore[arg-type]
+
+        state = await mower.async_update_device_information()
+
+        assert state.model == "DY123"
+        assert state.serial == "private-serial"
+        assert state.firmware_version == "1.2.3"
+        assert state.last_communication is not None
+        assert state.last_seen is None
 
     asyncio.run(run())
 

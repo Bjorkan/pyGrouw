@@ -22,6 +22,8 @@ Supported protocol helpers:
 - DYM status and auth/PIN notification parsing.
 - DYM PIN changes, mower settings, multi-area settings, and weekly work-time
   query/write helpers with read-back verification.
+- Standard GATT Device Information reads for model, serial, firmware, hardware,
+  software, manufacturer, and System ID fields exposed by the mower.
 - APK-shaped BlueKey debug payload encoding and parsing helpers for protocol
   research.
 - Optional BLE discovery helpers that match the Home Assistant integration's
@@ -68,8 +70,14 @@ client = GrouwBleMowerClient(
 mower = GrouwMower(client)
 
 state = await mower.async_update()
+state = await mower.async_update_device_information()
 await mower.async_start()
 ```
+
+`async_update_device_information()` populates the model, serial number, and
+firmware revision fields already present in `MowerState`. The lower-level
+`client.async_get_device_information()` method returns every available standard
+Device Information field.
 
 `device_provider` may be synchronous or asynchronous. It must return a
 connectable `bleak.backends.device.BLEDevice` or `None`.

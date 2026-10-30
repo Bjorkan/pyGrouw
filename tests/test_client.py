@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from bleak import BleakError
 import pytest
 
 from pygrouw.client import (
@@ -15,9 +16,16 @@ from pygrouw.client import (
     GrouwBleTimeout,
     _coerce_bool,
     _coerce_expected_cmd,
+    _decode_device_information_value,
     _drain_queue,
 )
-from pygrouw.const import DEFAULT_REQUESTED_MTU
+from pygrouw.const import (
+    DEFAULT_REQUESTED_MTU,
+    FIRMWARE_REVISION_CHARACTERISTIC_UUID,
+    MODEL_NUMBER_CHARACTERISTIC_UUID,
+    SERIAL_NUMBER_CHARACTERISTIC_UUID,
+    SYSTEM_ID_CHARACTERISTIC_UUID,
+)
 from pygrouw.protocol import (
     DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
@@ -413,6 +421,122 @@ def test_request_mtu_with_log_ignores_unsupported_client() -> None:
         client._tx_id = 1
 
         await client._request_mtu_with_log(_Client())  # type: ignore[arg-type]
+
+    asyncio.run(run())
+
+
+def test_request_mtu_with_log_uses_bluez_backend_fallback() -> None:
+    """Linux acquires an MTU when Bleak has no public request_mtu method."""
+
+    class _Backend:
+        def __init__(self) -> None:
+            self.acquired = False
+
+        async def _acquire_mtu(self) -> None:
+            self.acquired = True
+
+    class _Client:
+        mtu_size = 247
+
+        def __init__(self) -> None:
+            self._backend = _Backend()
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        ble_client = _Client()
+
+        await client._request_mtu_with_log(ble_client)  # type: ignore[arg-type]
+
+        assert ble_client._backend.acquired is True
+
+    asyncio.run(run())
+
+
+def test_decode_device_information_values() -> None:
+    """Text fields and the binary System ID use their standard representations."""
+    assert _decode_device_information_value("model", b"DY123\x00") == "DY123"
+    assert _decode_device_information_value("system_id", b"\x01\xab") == "01ab"
+
+
+def test_get_device_information_reads_supported_gatt_fields() -> None:
+    """Device identity is read in one app-shaped connection without logging values."""
+
+    class _Client:
+        mtu_size = 247
+
+        def __init__(self) -> None:
+            self.disconnected = False
+            self.values = {
+                MODEL_NUMBER_CHARACTERISTIC_UUID: b"DY123\x00",
+                SERIAL_NUMBER_CHARACTERISTIC_UUID: b"private-serial",
+                FIRMWARE_REVISION_CHARACTERISTIC_UUID: b"1.2.3",
+                SYSTEM_ID_CHARACTERISTIC_UUID: b"\x01\x02",
+            }
+
+        async def request_mtu(self, _mtu: int) -> int:
+            return self.mtu_size
+
+        async def read_gatt_char(self, characteristic: str) -> bytes:
+            if characteristic not in self.values:
+                raise BleakError("not present")
+            return self.values[characteristic]
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        ble_client = _Client()
+
+        async def connect(_timeout: float) -> _Client:
+            return ble_client
+
+        client._establish_connection = connect  # type: ignore[method-assign]
+
+        information = await client.async_get_device_information()
+
+        assert information == {
+            "model": "DY123",
+            "serial": "private-serial",
+            "firmware_version": "1.2.3",
+            "system_id": "0102",
+        }
+        assert ble_client.disconnected is True
+
+    asyncio.run(run())
+
+
+def test_get_device_information_fails_when_service_has_no_readable_fields() -> None:
+    """A missing Device Information service is reported and still disconnected."""
+
+    class _Client:
+        mtu_size = 23
+
+        def __init__(self) -> None:
+            self.disconnected = False
+
+        async def request_mtu(self, _mtu: int) -> int:
+            return self.mtu_size
+
+        async def read_gatt_char(self, _characteristic: str) -> bytes:
+            raise BleakError("not present")
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        ble_client = _Client()
+
+        async def connect(_timeout: float) -> _Client:
+            return ble_client
+
+        client._establish_connection = connect  # type: ignore[method-assign]
+
+        with pytest.raises(GrouwBleGattError, match="Device Information Service"):
+            await client.async_get_device_information()
+
+        assert ble_client.disconnected is True
 
     asyncio.run(run())
 
