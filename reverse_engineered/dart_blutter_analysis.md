@@ -140,6 +140,24 @@ Units and exact outgoing packing remain unconfirmed.
 Default daily values are `start="09:00"` and `work="3.0"`. Response mode
 `0x85` uses `"."` for work-duration display; other modes use `":"`.
 
+### LanguageSettingLogic
+
+```text
+0x481eb0  changeLanguage   -> write sub_cmd 0x06, code in byte 4
+0x4830fc  changeSelectIndex
+0x666a40  onReady
+0x666a7c  getLanguage      -> write sub_cmd 0x26, zero data
+0x666c9c  response closure -> tenToHex(byte5), match code table
+```
+
+`changeLanguage` builds a 19-entry code table (`0, 2, 4, ..., 36`) at runtime,
+loads `LanguageSettingState.selectIndex`, and writes the selected code into
+payload byte 4. `getLanguage` sends a zero-data `0x26` query and its response
+closure maps `byte5` through `Helper.tenToHex` before matching the table.
+
+`LanguageSettingState` (`state.dart`) stores the 19 ordered language strings
+(English through Italiano) and a `selectIndex` field.
+
 ## Helper
 
 `common/util/helper.dart`.
@@ -178,6 +196,45 @@ Commands are constructed as plain Dart `List<int>` values and sent through
 `writeAndNotify` -> `blueWriteAndNotification` ->
 `BluetoothCharacteristic::write`. No Dart-side encryption, DYM framing, or
 checksum logic is visible in this path.
+
+## BLE Write Call-Site Inventory
+
+A bounded search of every `Helper::writeAndNotify` call and every direct
+`BluetoothCharacteristic::write` in the recovered `romow_bluetooth` tree found
+only the constructors already documented here. There is no additional
+diagnostic, statistics, factory-reset, or standalone firmware-transfer write
+in the Dart layer.
+
+Direct `BluetoothCharacteristic::write` sites:
+
+```text
+pages/main/logic.dart  0x4621d8  blueWriteAndNotification (low-level writer)
+pages/main/logic.dart  0x471538  setTime (BlueKey.setTime with replaceRange)
+```
+
+`Helper::writeAndNotify` sites, grouped by page:
+
+```text
+pages/main/logic.dart           0x47e498  pinToDevice (queryPin 0x18)
+pages/mower_status/logic.dart   0x4dd64c  changeWorkType (queryInfo 0x00)
+pages/mower_status/logic.dart   0x51ba38  manageDevice control (start 0x00)
+pages/mower_status/logic.dart   0x51bad0  manageDevice control (stop 0x02)
+pages/mower_status/logic.dart   0x51bb80  manageDevice control (go-to-work 0x04)
+pages/mower_status/logic.dart   0x51bc30  manageDevice control (back 0x06)
+pages/mower_status/logic.dart   0x51c4cc  errorMemory (0x3c)
+pages/device/logic.dart         0x48013c  initDeviceInfo (queryInfo 0x00)
+pages/change_pin/logic.dart     0x461bc8  changePin (0x0c)
+pages/change_pin/logic.dart     0x665ff0  getChangePIN
+pages/mower_setting/logic.dart  0x482a0c  saveSetting (0x12)
+pages/mower_setting/logic.dart  0x664224  getMowerSetting (0x32)
+pages/multi_area_mowing/logic.dart 0x490c9c  setInfo
+pages/multi_area_mowing/logic.dart 0x664f6c  getInfo (0x3a)
+pages/working_time_setting/logic.dart 0x498130  saveSetting
+pages/working_time_setting/logic.dart 0x4982bc  saveSetting
+pages/working_time_setting/logic.dart 0x67835c  initData (workTime 0x28)
+pages/language_setting/logic.dart 0x482104  changeLanguage (0x06)
+pages/language_setting/logic.dart 0x666c88  getLanguage (0x26)
+```
 
 ## Package Paths Found
 

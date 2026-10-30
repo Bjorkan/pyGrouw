@@ -62,6 +62,10 @@ BLUEKEY_WORK_TIME = 0x28
 BLUEKEY_MOWER_SETTING_QUERY = 0x32
 BLUEKEY_MULTI_AREA_QUERY = 0x3A
 BLUEKEY_ERROR_MEMORY = 0x3C
+# 0x06 is shared with the "back to station" control in MowerStatusLogic::
+# manageDevice. It must be resolved from bluekey_context, not by sub-command.
+BLUEKEY_LANGUAGE_WRITE = 0x06
+BLUEKEY_LANGUAGE_QUERY = 0x26
 
 BLUEKEY_COMMAND_SPECS: dict[str, tuple[int, tuple[int, ...]]] = {
     "query_info": (BLUEKEY_QUERY_INFO, (0x22,) * 8),
@@ -73,6 +77,8 @@ BLUEKEY_COMMAND_SPECS: dict[str, tuple[int, tuple[int, ...]]] = {
     "multi_area": (BLUEKEY_MULTI_AREA_QUERY, ()),
     "multi_area_query": (BLUEKEY_MULTI_AREA_QUERY, ()),
     "error_memory": (BLUEKEY_ERROR_MEMORY, ()),
+    "language_query": (BLUEKEY_LANGUAGE_QUERY, ()),
+    "query_language": (BLUEKEY_LANGUAGE_QUERY, ()),
     "start": (0x00, ()),
     "stop": (0x02, ()),
     "go_to_work": (0x04, ()),
@@ -90,6 +96,32 @@ BLUEKEY_SUB_COMMAND_NAMES: dict[int, str] = {
     BLUEKEY_MULTI_AREA_QUERY: "multi_area",
     BLUEKEY_ERROR_MEMORY: "error_memory",
 }
+
+# Language selection order recovered from LanguageSettingState (19 entries).
+# The write code is `index * 2`; the query response is matched through the same
+# code table after Helper.tenToHex in LanguageSettingLogic::getLanguage.
+BLUEKEY_LANGUAGES = (
+    "English",
+    "Deutsch",
+    "dansk",
+    "čeština",
+    "slovenský",
+    "Polski",
+    "Magyarország",
+    "Русский",
+    "Français",
+    "български",
+    "Suomi",
+    "Nederlands",
+    "lietuvių",
+    "România",
+    "Norge",
+    "Português",
+    "Sverige",
+    "español",
+    "Italiano",
+)
+BLUEKEY_LANGUAGE_CODES = tuple(index * 2 for index in range(len(BLUEKEY_LANGUAGES)))
 
 
 def _looks_like_pin_digits(payload: bytes) -> bool:
@@ -171,6 +203,25 @@ def encode_bluekey_command(command: str) -> bytes:
         raise ValueError(f"Unsupported BlueKey command: {command}")
     sub_cmd, data = spec
     return encode_bluekey_payload(sub_cmd, data)
+
+
+def _coerce_bluekey_language_code(language: str | int) -> int:
+    """Resolve a BlueKey language name or code to its APK code byte."""
+    if isinstance(language, int):
+        if language in BLUEKEY_LANGUAGE_CODES:
+            return language
+        raise ValueError(f"Unknown BlueKey language code: {language}")
+    name = str(language).strip().lower()
+    for index, candidate in enumerate(BLUEKEY_LANGUAGES):
+        if candidate.lower() == name:
+            return index * 2
+    raise ValueError(f"Unknown BlueKey language: {language}")
+
+
+def encode_bluekey_language(language: str | int) -> bytes:
+    """Build a 48-byte BlueKey language-select payload (sub-command 0x06)."""
+    code = _coerce_bluekey_language_code(language)
+    return encode_bluekey_payload(BLUEKEY_LANGUAGE_WRITE, (code,))
 
 
 def redact_daye_message(message: dict[str, Any]) -> dict[str, Any]:
@@ -444,6 +495,13 @@ def _bluekey_decimal_chunks(chunks: bytes) -> str | None:
     return "".join(significant) if significant else "0"
 
 
+def _bluekey_language_name(code: int) -> str | None:
+    """Map a BlueKey language code to its APK display name."""
+    if code in BLUEKEY_LANGUAGE_CODES:
+        return BLUEKEY_LANGUAGES[code // 2]
+    return None
+
+
 def _parse_bluekey_payload(
     payload: bytes,
     bluekey_context: str | None = None,
@@ -524,6 +582,15 @@ def _parse_bluekey_payload(
             }
             for index, day in enumerate(days)
         }
+
+    if command_name in {"language_query", "query_language"} and len(payload) >= 5:
+        # LanguageSettingLogic::getLanguage reads byte5, applies Helper.tenToHex,
+        # then matches the result against the language code table.
+        code = daye_ten_to_hex(str(payload[4]))
+        message["bluekey_language_code"] = code
+        language = _bluekey_language_name(code)
+        if language is not None:
+            message["bluekey_language"] = language
 
     return message
 

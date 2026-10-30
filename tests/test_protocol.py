@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pygrouw.protocol import (
+    BLUEKEY_LANGUAGE_QUERY,
     BLUEKEY_MOWER_SETTING_QUERY,
     BLUEKEY_MULTI_AREA_QUERY,
     BLUEKEY_QUERY_PIN,
@@ -14,6 +15,7 @@ from pygrouw.protocol import (
     MowerState,
     daye_ten_to_hex,
     encode_bluekey_command,
+    encode_bluekey_language,
     encode_bluekey_payload,
     encode_daye_command,
     encode_daye_mower_settings,
@@ -78,6 +80,86 @@ def test_encode_bluekey_payload_accepts_generic_sub_command() -> None:
     assert len(payload) == 48
     assert payload[:6] == bytes.fromhex("88b29a320102")
     assert payload[19:24] == bytes.fromhex("2c0c02fe14")
+
+
+def test_bluekey_language_table_matches_apk_order() -> None:
+    """The recovered language order has 19 entries with codes 0,2,...,36."""
+    from pygrouw.protocol import BLUEKEY_LANGUAGE_CODES, BLUEKEY_LANGUAGES
+
+    assert len(BLUEKEY_LANGUAGES) == 19
+    assert list(BLUEKEY_LANGUAGE_CODES) == list(range(0, 38, 2))
+    assert BLUEKEY_LANGUAGES[0] == "English"
+    assert BLUEKEY_LANGUAGES[18] == "Italiano"
+
+
+def test_encode_bluekey_language_matches_apk_layout() -> None:
+    """Language selection is sub-command 0x06 with the code in byte 4."""
+    payload = encode_bluekey_language("Italiano")
+
+    assert len(payload) == 48
+    assert payload[:5] == bytes.fromhex("88b29a0624")
+    assert payload[5:19] == b"\x00" * 14
+    assert payload[19:24] == bytes.fromhex("2c0c02fe14")
+    assert payload[24:] == b"\x00" * 24
+
+
+def test_encode_bluekey_language_accepts_names_and_codes() -> None:
+    """Language codes are index * 2, accepted by name or by code."""
+    assert encode_bluekey_language("English")[4] == 0
+    assert encode_bluekey_language("english")[4] == 0
+    assert encode_bluekey_language("Deutsch")[4] == 2
+    assert encode_bluekey_language("Italiano")[4] == 36
+    assert encode_bluekey_language(36)[4] == 36
+
+
+def test_encode_bluekey_language_rejects_unknown() -> None:
+    """Unknown language names and out-of-table codes are rejected."""
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown BlueKey language"):
+        encode_bluekey_language("Klingon")
+    with pytest.raises(ValueError, match="Unknown BlueKey language code"):
+        encode_bluekey_language(7)
+
+
+def test_encode_bluekey_language_query_matches_apk_layout() -> None:
+    """Language query is sub-command 0x26 with zero data."""
+    payload = encode_bluekey_command("language_query")
+
+    assert len(payload) == 48
+    assert payload[:4] == bytes.fromhex("88b29a26")
+    assert payload[4:19] == b"\x00" * 15
+    assert payload[19:24] == bytes.fromhex("2c0c02fe14")
+
+
+def test_parse_bluekey_language_query_maps_ten_to_hex() -> None:
+    """Language query responses apply Helper.tenToHex to byte5."""
+    message = parse_daye_payload(
+        encode_bluekey_payload(BLUEKEY_LANGUAGE_QUERY, [14]),
+        bluekey_context="language_query",
+    )
+
+    assert message is not None
+    assert message["bluekey_language_code"] == 14
+    assert message["bluekey_language"] == "Русский"
+
+    message = parse_daye_payload(
+        encode_bluekey_payload(BLUEKEY_LANGUAGE_QUERY, [20]),
+        bluekey_context="language_query",
+    )
+
+    assert message is not None
+    assert message["bluekey_language_code"] == 36
+    assert message["bluekey_language"] == "Italiano"
+
+
+def test_bluekey_language_write_requires_context() -> None:
+    """0x06 is ambiguous (language vs back-to-station) and is not auto-named."""
+    message = parse_daye_payload(encode_bluekey_payload(0x06, [36]))
+
+    assert message is not None
+    assert "bluekey_language" not in message
+    assert message.get("bluekey_command") is None
 
 
 def test_parse_daye_status_notification_maps_observed_fields() -> None:

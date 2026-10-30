@@ -148,6 +148,19 @@ Letter codes map to translation keys `alert_b`, `alert_n`, `alert_l`,
 `alert_t`, `alert_r`, `alert_x`, `alert_c`, `alert_s`, `alert_p`, and
 `alert_a`.
 
+### Language (`sub_cmd 0x26`)
+
+Parsed by `LanguageSettingLogic::getLanguage` response closure at `0x666c9c`:
+
+```text
+byte5   language code string, default "0" when absent
+```
+
+The app applies `Helper.tenToHex` to `byte5`, then searches the 19-entry
+language code table (`0, 2, 4, ..., 36`) for the result and jumps to the
+matching page. The integration mirrors this as `bluekey_language_code` plus a
+`bluekey_language` name when the transformed value is in the table.
+
 ## BlueKey Work Mode Mapping
 
 From `MowerStatusLogic::changeWorkType` callback at `0x4dd66c`, `byte13`

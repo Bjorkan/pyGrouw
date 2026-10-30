@@ -39,9 +39,11 @@ platform/native conversion.
 | --- | --- |
 | `0x00` | `queryInfo` |
 | `0x04` | `setTime` |
+| `0x06` | `languageWrite` (shared with back-to-station control) |
 | `0x0c` | `changePin` |
 | `0x12` | `mowerSettingWrite` |
 | `0x18` | `queryPin` |
+| `0x26` | `languageQuery` |
 | `0x28` | `workTime` |
 | `0x32` | `mowerSettingQuery` |
 | `0x3a` | `multiAreaQuery` |
@@ -49,6 +51,11 @@ platform/native conversion.
 
 `0x0c`, `0x12`, `0x32`, and `0x3a` are built dynamically by page logic rather
 than exposed only as static `BlueKey` fields.
+
+`0x06` is context-dependent: `LanguageSettingLogic::changeLanguage` uses it for
+language selection, while `MowerStatusLogic::manageDevice` uses the same value
+for the back-to-station control. The integration therefore never maps `0x06`
+to a name unconditionally and resolves it only through request context.
 
 ## Static Payloads
 
@@ -119,6 +126,32 @@ area2Per, area2Dis, area3Per, area3Dis
 The page uses `Helper.tenToHex` while packing numeric text fields. Distance
 unit and multi-byte packing remain unconfirmed.
 
+### Language
+
+`LanguageSettingLogic::changeLanguage` writes `sub_cmd 0x06`. It selects a code
+from a 19-entry table (`0, 2, 4, ..., 36`, one per language) and stores it in
+`[4]`:
+
+```text
+[4]   language code: 0, 2, 4, ..., 36
+```
+
+`LanguageSettingLogic::getLanguage` queries with `sub_cmd 0x26` and zero data.
+The response maps `byte5` through `Helper.tenToHex` before matching it against
+the same code table.
+
+The 19 languages, in order, are:
+
+```text
+English, Deutsch, dansk, čeština, slovenský, Polski, Magyarország, Русский,
+Français, български, Suomi, Nederlands, lietuvių, România, Norge, Português,
+Sverige, español, Italiano
+```
+
+The tenToHex conversion is not a bijection over the code table: codes up to
+`0x0e` round-trip, while `16/18/20` map to `32/34/36`. Exact on-wire echo
+behaviour is unconfirmed against hardware.
+
 ### Working Time
 
 `WorkingTimeSettingLogic::initData` writes static `BlueKey.workTime`
@@ -158,6 +191,7 @@ confirm the actual write path for the target firmware.
 {"bluekey": "mower_settings"}
 {"bluekey": "multi_area"}
 {"bluekey": "error_memory"}
+{"bluekey": "language_query"}
 ```
 
 Generic probes can use `bluekey_sub_cmd` with optional `bluekey_data`.
