@@ -17,7 +17,47 @@ CONNECT_QUERY_SCHEDULE = 203
 CONNECT_QUERY_RAIN = 205
 CONNECT_QUERY_MULTI_AREA = 207
 CONNECT_QUERY_DEVICE_INFO = 208
+CONNECT_QUERY_BATTERY = 212
 CONNECT_QUERY_FEATURES = 214
+
+CONNECT_SET_WORK_MODE = 101
+CONNECT_SET_TIME = 102
+CONNECT_SET_SCHEDULE = 103
+CONNECT_VERIFY_PIN = 104
+CONNECT_SET_RAIN = 105
+CONNECT_SET_LANGUAGE = 106
+CONNECT_SET_DEVICE_NAME = 107
+CONNECT_SET_MULTI_AREA = 108
+CONNECT_SET_WIFI = 109
+CONNECT_SET_PIN = 110
+CONNECT_START_UPDATE = 111
+CONNECT_RESET_DEVICE = 112
+CONNECT_SET_ULTRASONIC = 114
+CONNECT_SET_LED = 115
+CONNECT_SET_GPS = 116
+CONNECT_RESET_MAP = 121
+CONNECT_SET_SCHEDULE_PAUSE = 127
+
+CONNECT_MUTATING_COMMANDS = frozenset(
+    {
+        CONNECT_SET_WORK_MODE,
+        CONNECT_SET_TIME,
+        CONNECT_SET_SCHEDULE,
+        CONNECT_SET_RAIN,
+        CONNECT_SET_LANGUAGE,
+        CONNECT_SET_DEVICE_NAME,
+        CONNECT_SET_MULTI_AREA,
+        CONNECT_SET_WIFI,
+        CONNECT_SET_PIN,
+        CONNECT_START_UPDATE,
+        CONNECT_RESET_DEVICE,
+        CONNECT_SET_ULTRASONIC,
+        CONNECT_SET_LED,
+        CONNECT_SET_GPS,
+        CONNECT_RESET_MAP,
+        CONNECT_SET_SCHEDULE_PAUSE,
+    }
+)
 
 CONNECT_RESPONSE_ACK = 400
 CONNECT_RESPONSE_ALL_INFO = 500
@@ -26,7 +66,9 @@ CONNECT_RESPONSE_SCHEDULE = 503
 CONNECT_RESPONSE_RAIN = 505
 CONNECT_RESPONSE_MULTI_AREA = 507
 CONNECT_RESPONSE_DEVICE_INFO = 508
+CONNECT_RESPONSE_BATTERY = 512
 CONNECT_RESPONSE_FEATURES = 514
+CONNECT_RESPONSE_RESET_MAP = 523
 
 CONNECT_WORK_MODES = {
     "pause": 0,
@@ -163,7 +205,7 @@ def encode_connect_query(command: int) -> list[bytes]:
 
 
 def encode_connect_work_mode(command: str | int, point: int | None = None) -> list[bytes]:
-    """Set stop/work/home/trim/start-point mode (request cmd 0)."""
+    """Set stop/work/home/trim/start-point mode (request command 101)."""
     if isinstance(command, str):
         try:
             mode = CONNECT_WORK_MODES[command.strip().lower()]
@@ -173,7 +215,7 @@ def encode_connect_work_mode(command: str | int, point: int | None = None) -> li
         mode = command
     if mode not in {0, 1, 2, 4, 5}:
         raise ValueError("Connect work mode must be 0, 1, 2, 4, or 5")
-    message: dict[str, Any] = {"cmd": 0, "mode": mode}
+    message: dict[str, Any] = {"cmd": CONNECT_SET_WORK_MODE, "mode": mode}
     if point is not None:
         if not 0 <= point <= 255:
             raise ValueError("point must be between 0 and 255")
@@ -185,14 +227,22 @@ def encode_connect_rain(enabled: bool, delay: int) -> list[bytes]:
     """Set rain mowing and the firmware's integer rain delay value."""
     if delay < 0:
         raise ValueError("delay must not be negative")
-    return encode_connect_message({"cmd": 0, "rain_en": enabled, "rain_delay_set": delay})
+    return encode_connect_message(
+        {"cmd": CONNECT_SET_RAIN, "rain_en": enabled, "rain_delay_set": delay}
+    )
 
 
 def encode_connect_ultrasonic(enabled: bool | int, level: int) -> list[bytes]:
     """Set ultrasonic obstacle sensing and sensitivity level."""
     if not 0 <= level <= 255:
         raise ValueError("level must be between 0 and 255")
-    return encode_connect_message({"cmd": 0, "ultra_en": int(bool(enabled)), "ultra_lv": level})
+    return encode_connect_message(
+        {
+            "cmd": CONNECT_SET_ULTRASONIC,
+            "ultra_en": int(bool(enabled)),
+            "ultra_lv": level,
+        }
+    )
 
 
 def encode_connect_language(language: str | int) -> list[bytes]:
@@ -207,14 +257,16 @@ def encode_connect_language(language: str | int) -> list[bytes]:
             raise ValueError(f"Unknown Connect language: {language}") from err
     if not 0 <= code < len(CONNECT_LANGUAGES):
         raise ValueError(f"Unknown Connect language code: {code}")
-    return encode_connect_message({"cmd": 0, "language": code})
+    return encode_connect_message({"cmd": CONNECT_SET_LANGUAGE, "language": code})
 
 
 def encode_connect_time(value: datetime) -> list[bytes]:
     """Synchronize date, time, and weekday using the app's packed integers."""
     ymd = value.year * 10000 + value.month * 100 + value.day
     hms = value.hour * 10000 + value.minute * 100 + value.second
-    return encode_connect_message({"cmd": 0, "ymd": ymd, "hms": hms, "week": value.isoweekday()})
+    return encode_connect_message(
+        {"cmd": CONNECT_SET_TIME, "ymd": ymd, "hms": hms, "week": value.isoweekday() % 7}
+    )
 
 
 def encode_connect_pin(pin: str, *, verify_only: bool = False) -> list[bytes]:
@@ -223,8 +275,8 @@ def encode_connect_pin(pin: str, *, verify_only: bool = False) -> list[bytes]:
         raise ValueError("PIN must be exactly 4 decimal digits")
     # SetPasswdParams and SetInputPwdParams deliberately have the same JSON
     # fields; request context determines whether firmware verifies or stores it.
-    _ = verify_only
-    return encode_connect_message({"cmd": 0, "passwd": int(pin)})
+    command = CONNECT_VERIFY_PIN if verify_only else CONNECT_SET_PIN
+    return encode_connect_message({"cmd": command, "passwd": int(pin)})
 
 
 def encode_connect_device_name(name: str) -> list[bytes]:
@@ -232,14 +284,14 @@ def encode_connect_device_name(name: str) -> list[bytes]:
     normalized = name.strip()
     if not normalized:
         raise ValueError("name must not be empty")
-    return encode_connect_message({"cmd": 0, "rename": normalized})
+    return encode_connect_message({"cmd": CONNECT_SET_DEVICE_NAME, "rename": normalized})
 
 
 def encode_connect_wifi(ssid: str, password: str) -> list[bytes]:
     """Provision Wi-Fi credentials over the local BLE transport."""
     if not ssid:
         raise ValueError("ssid must not be empty")
-    return encode_connect_message({"cmd": 0, "ssid": ssid, "passwd": password})
+    return encode_connect_message({"cmd": CONNECT_SET_WIFI, "ssid": ssid, "passwd": password})
 
 
 def encode_connect_led(
@@ -254,7 +306,7 @@ def encode_connect_led(
     """Configure the Connect-generation mower LED feature."""
     return encode_connect_message(
         {
-            "cmd": 0,
+            "cmd": CONNECT_SET_LED,
             "led_en": int(enabled),
             "led_color": color,
             "led_mode": mode,
@@ -266,13 +318,28 @@ def encode_connect_led(
 
 
 def encode_connect_schedule(schedule: Mapping[str, Any]) -> list[bytes]:
-    """Encode an APK-compatible schedule object with request command 0."""
-    return encode_connect_message({**schedule, "cmd": 0})
+    """Encode an APK-compatible schedule object with request command 103."""
+    return encode_connect_message({**schedule, "cmd": CONNECT_SET_SCHEDULE})
 
 
 def encode_connect_schedule_pause(paused: bool) -> list[bytes]:
     """Pause or resume the configured schedule."""
-    return encode_connect_message({"cmd": 0, "pause": paused})
+    return encode_connect_message({"cmd": CONNECT_SET_SCHEDULE_PAUSE, "pause": paused})
+
+
+def encode_connect_gps(enabled: bool | int) -> list[bytes]:
+    """Enable or disable the Connect electronic/GPS feature."""
+    return encode_connect_message({"cmd": CONNECT_SET_GPS, "gps_en": int(bool(enabled))})
+
+
+def encode_connect_reset_map() -> list[bytes]:
+    """Build the Connect work-map reset command."""
+    return encode_connect_message({"cmd": CONNECT_RESET_MAP})
+
+
+def encode_connect_reset_device() -> list[bytes]:
+    """Build the Connect factory/device reset command."""
+    return encode_connect_message({"cmd": CONNECT_RESET_DEVICE})
 
 
 def encode_connect_multi_area(
@@ -292,7 +359,12 @@ def encode_connect_multi_area(
         raise ValueError("zones, meters, and proportions must each contain four values")
     if any(value < 0 for value in (*zone_values, *meter_values, *proportion_values)):
         raise ValueError("multi-area values must not be negative")
-    message: dict[str, Any] = {"cmd": 0, "mul_en": enabled, "mul_auto": automatic, "mul_mode": mode}
+    message: dict[str, Any] = {
+        "cmd": CONNECT_SET_MULTI_AREA,
+        "mul_en": enabled,
+        "mul_auto": automatic,
+        "mul_mode": mode,
+    }
     for index in range(4):
         suffix = index + 1
         message[f"mul_zon{suffix}"] = zone_values[index]

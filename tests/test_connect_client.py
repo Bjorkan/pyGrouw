@@ -15,6 +15,7 @@ from pygrouw.const import (
     CONNECT_WRITE_CHARACTERISTIC_UUID,
 )
 from pygrouw.exceptions import (
+    GrouwBleAuthenticationError,
     GrouwBleGattError,
     GrouwBleOperationIndeterminate,
     GrouwBleVerificationError,
@@ -97,18 +98,92 @@ def test_connect_command_accepts_command_specific_result() -> None:
     asyncio.run(run())
 
 
+def test_connect_query_uses_recovered_battery_commands() -> None:
+    async def run() -> None:
+        client = GrouwConnectBleMowerClient("AA:BB:CC:DD:EE:FF")
+        seen: dict[str, Any] = {}
+
+        async def query(command: int, response_command: int | set[int]) -> dict[str, Any]:
+            seen.update(command=command, response_command=response_command)
+            return {"cmd": response_command, "bat_id": 7}
+
+        client.async_query = query  # type: ignore[method-assign]
+
+        result = await client.async_get_battery_info()
+
+        assert seen == {"command": 212, "response_command": 512}
+        assert result["bat_id"] == 7
+
+    asyncio.run(run())
+
+
 def test_connect_pin_rejection_does_not_update_client_pin() -> None:
     async def run() -> None:
         client = GrouwConnectBleMowerClient("AA:BB:CC:DD:EE:FF", pin="1234")
 
         async def request(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-            return {"cmd": 504, "passwd_res": False}
+            return {"cmd": 400, "result": False, "command": 110}
 
         client.async_request_connect = request  # type: ignore[method-assign]
 
         with pytest.raises(GrouwBleVerificationError, match="rejected pin"):
             await client.async_set_pin("4321")
         assert client.pin == "1234"
+
+    asyncio.run(run())
+
+
+def test_connect_verify_pin_uses_104_and_maps_rejection() -> None:
+    async def run() -> None:
+        client = GrouwConnectBleMowerClient("AA:BB:CC:DD:EE:FF", pin="1234")
+        seen: dict[str, Any] = {}
+
+        async def request(_packets: list[bytes], **kwargs: Any) -> dict[str, Any]:
+            seen.update(kwargs)
+            return {"cmd": 504, "passwd_res": False}
+
+        client.async_request_connect = request  # type: ignore[method-assign]
+
+        with pytest.raises(GrouwBleAuthenticationError, match="rejected PIN"):
+            await client.async_verify_pin()
+        assert seen["expected_cmd"] == {400, 504}
+        assert seen["expected_ack_command"] == 104
+
+    asyncio.run(run())
+
+
+def test_connect_wait_ignores_ack_for_another_command() -> None:
+    async def run() -> None:
+        client = GrouwConnectBleMowerClient("AA:BB:CC:DD:EE:FF")
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        queue.put_nowait({"cmd": 400, "command": 105, "result": True})
+        queue.put_nowait({"cmd": 400, "command": 110, "result": True})
+
+        result = await client._wait_for_connect_response(
+            queue,
+            expected_cmd=400,
+            timeout=0.1,
+            expected_ack_command=110,
+        )
+
+        assert result["command"] == 110
+
+    asyncio.run(run())
+
+
+def test_connect_map_reset_rejects_negative_acknowledgement() -> None:
+    async def run() -> None:
+        client = GrouwConnectBleMowerClient("AA:BB:CC:DD:EE:FF")
+
+        async def request(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+            assert kwargs["expected_cmd"] == {400, 523}
+            assert kwargs["expected_ack_command"] == 121
+            return {"cmd": 400, "command": 121, "result": False}
+
+        client.async_request_connect = request  # type: ignore[method-assign]
+
+        with pytest.raises(GrouwBleVerificationError, match="map reset"):
+            await client.async_reset_map()
 
     asyncio.run(run())
 
@@ -172,7 +247,7 @@ def test_connect_timeout_after_mutating_write_is_indeterminate() -> None:
 
         with pytest.raises(GrouwBleOperationIndeterminate) as exc_info:
             await client.async_request_connect(
-                encode_connect_message({"cmd": 0, "rain_en": True}),
+                encode_connect_message({"cmd": 105, "rain_en": True}),
                 expected_cmd=400,
                 timeout=0.01,
                 command_name="rain",

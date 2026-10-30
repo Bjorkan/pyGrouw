@@ -11,13 +11,19 @@ from pygrouw.connect_protocol import (
     connect_xor,
     decode_connect_packets,
     encode_connect_device_name,
+    encode_connect_gps,
     encode_connect_language,
+    encode_connect_led,
     encode_connect_multi_area,
     encode_connect_pin,
     encode_connect_query,
+    encode_connect_rain,
+    encode_connect_reset_device,
+    encode_connect_reset_map,
     encode_connect_schedule,
     encode_connect_schedule_pause,
     encode_connect_time,
+    encode_connect_ultrasonic,
     encode_connect_wifi,
     encode_connect_work_mode,
     frame_connect_payload,
@@ -67,35 +73,58 @@ def test_connect_decoder_rejects_bad_checksum_and_recovers() -> None:
 
 
 def test_connect_work_modes_match_app_values() -> None:
-    assert _payload(encode_connect_work_mode("stop")) == b'{"cmd":0,"mode":0}'
-    assert _payload(encode_connect_work_mode("start")) == b'{"cmd":0,"mode":1}'
-    assert _payload(encode_connect_work_mode("dock")) == b'{"cmd":0,"mode":2}'
-    assert _payload(encode_connect_work_mode("trim")) == b'{"cmd":0,"mode":4}'
-    assert _payload(encode_connect_work_mode("start_point", 3)) == (b'{"cmd":0,"mode":5,"point":3}')
-    assert _payload(encode_connect_work_mode("pause")) == b'{"cmd":0,"mode":0}'
-    assert _payload(encode_connect_work_mode("resume")) == b'{"cmd":0,"mode":1}'
+    assert _payload(encode_connect_work_mode("stop")) == b'{"cmd":101,"mode":0}'
+    assert _payload(encode_connect_work_mode("start")) == b'{"cmd":101,"mode":1}'
+    assert _payload(encode_connect_work_mode("dock")) == b'{"cmd":101,"mode":2}'
+    assert _payload(encode_connect_work_mode("trim")) == b'{"cmd":101,"mode":4}'
+    assert _payload(encode_connect_work_mode("start_point", 3)) == (
+        b'{"cmd":101,"mode":5,"point":3}'
+    )
+    assert _payload(encode_connect_work_mode("pause")) == b'{"cmd":101,"mode":0}'
+    assert _payload(encode_connect_work_mode("resume")) == b'{"cmd":101,"mode":1}'
 
 
 def test_connect_settings_use_apk_json_field_names() -> None:
-    assert _payload(encode_connect_pin("0123")) == b'{"cmd":0,"passwd":123}'
-    assert _payload(encode_connect_device_name("Garden")) == b'{"cmd":0,"rename":"Garden"}'
+    assert _payload(encode_connect_pin("0123")) == b'{"cmd":110,"passwd":123}'
+    assert _payload(encode_connect_pin("0123", verify_only=True)) == (b'{"cmd":104,"passwd":123}')
+    assert _payload(encode_connect_device_name("Garden")) == b'{"cmd":107,"rename":"Garden"}'
     assert _payload(encode_connect_wifi("My WiFi", "secret")) == (
-        b'{"cmd":0,"ssid":"My WiFi","passwd":"secret"}'
+        b'{"cmd":109,"ssid":"My WiFi","passwd":"secret"}'
     )
-    assert _payload(encode_connect_schedule_pause(True)) == b'{"cmd":0,"pause":true}'
-    assert _payload(encode_connect_language("English")) == b'{"cmd":0,"language":4}'
+    assert _payload(encode_connect_schedule_pause(True)) == b'{"cmd":127,"pause":true}'
+    assert _payload(encode_connect_language("English")) == b'{"cmd":106,"language":4}'
+    assert _payload(encode_connect_gps(True)) == b'{"cmd":116,"gps_en":1}'
+    assert _payload(encode_connect_reset_map()) == b'{"cmd":121}'
+    assert _payload(encode_connect_reset_device()) == b'{"cmd":112}'
+    assert _payload(encode_connect_rain(True, 30)) == (
+        b'{"cmd":105,"rain_en":true,"rain_delay_set":30}'
+    )
+    assert _payload(encode_connect_ultrasonic(True, 2)) == (
+        b'{"cmd":114,"ultra_en":1,"ultra_lv":2}'
+    )
+    assert b'"cmd":115' in _payload(
+        encode_connect_led(
+            enabled=True,
+            color="#ffffff",
+            mode=1,
+            start=1800,
+            end=2300,
+            night=True,
+        )
+    )
 
 
 def test_connect_time_uses_packed_apk_values() -> None:
     assert _payload(encode_connect_time(datetime(2026, 10, 31, 14, 5, 9))) == (
-        b'{"cmd":0,"ymd":20261031,"hms":140509,"week":6}'
+        b'{"cmd":102,"ymd":20261031,"hms":140509,"week":6}'
     )
+    assert b'"week":0' in _payload(encode_connect_time(datetime(2026, 11, 1, 12, 0)))
 
 
 def test_connect_schedule_cannot_override_setter_command() -> None:
-    assert _payload(encode_connect_schedule({"cmd": 999, "monday": True})) == (
-        b'{"cmd":0,"monday":true}'
-    )
+    assert _payload(
+        encode_connect_schedule({"cmd": 999, "auto": True, "Mon": {"Trimming": False, "slice": []}})
+    ) == (b'{"cmd":103,"auto":true,"Mon":{"Trimming":false,"slice":[]}}')
 
 
 def test_connect_multi_area_encodes_four_slots() -> None:
@@ -112,6 +141,7 @@ def test_connect_multi_area_encodes_four_slots() -> None:
     assert b'"mul_zon4":4' in payload
     assert b'"mul_meter3":3000' in payload
     assert b'"mul_pro2":20' in payload
+    assert b'"cmd":108' in payload
 
 
 def test_decode_connect_packets_normalizes_status() -> None:

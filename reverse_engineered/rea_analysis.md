@@ -169,13 +169,23 @@ Payload: at most 3000 bytes in the recovered implementation
 
 Observed query/response pairs are `200→500` (all info), `201→501` (status),
 `203→503` (schedule), `205→505` (rain), `207→507` (multi-area), `208→508`
-(device information), and `214→514` (feature flags). Work modes are stop `0`,
-work `1`, home `2`, trim `4`, and start-point `5`.
+(device information), `212→512` (battery), and `214→514` (feature flags). Work
+modes are stop `0`, work `1`, home `2`, trim `4`, and start-point `5`.
 
-Setter payloads use request command `0`. The response parser recognizes generic
-acknowledgement `400`, rename `502`, PIN result `504`, and work results
-`10100`, `10101`, and `10102`; the client accepts the relevant response family
-and then refreshes all-info state.
+Kotlin default-argument constructors establish the setter command table: work
+`101`, time `102`, schedule `103`, PIN verification `104`, rain `105`, language
+`106`, rename `107`, multi-area `108`, Wi-Fi `109`, PIN change `110`, update
+`111`, device reset `112`, ultrasonic `114`, LED `115`, GPS/electronic `116`,
+map reset `121`, and schedule pause `127`. The earlier visible `0` arguments at
+call sites are replaced by these defaults before serialization.
+
+The response parser recognizes generic acknowledgement `400`, rename `502`, PIN
+result `504`, battery `512`, features `514`, BLE map reset `523`, and work
+results `10100`, `10101`, and `10102`. Schedule fields are `auto`, `pause`, and
+`Mon` through `Sun`, each with `Trimming` and `slice` entries containing `start`
+and `end`. The app divides received raw multi-area meter fields by `1000` for
+display. The device-reset BLE flow writes command `112`, waits 10 seconds, and
+refreshes all information.
 
 Key Evidence:
 
@@ -187,6 +197,13 @@ Key Evidence:
   `ev_39d4e29f9e2f9580a68bc6e445cd63ee6cd0baef7bc7a489d2d1b85ea22db919`
 - work-mode selection:
   `ev_b8061b307938c56c1c897523755781bd7429c973aef617716bc4ff0e15f95dd0`
+- command defaults:
+  `ev_298ad02c2756b02c2b128503cd5cd5d1ecfbc6b95fb22b8fd4ac8b52c628ffdc`,
+  `ev_b49794d104eefbd9400f91f5862f44b2f20d2b72e61862de77df1afd5ac651ea`,
+  `ev_b66da44bbef77bbca16d1e0e188aa0fb1ec773df099cba55b4b3aae614eb4fba`,
+  `ev_381d90eab93e1266039525f4d2b32327a4eb247d37ac06a09e32c82958dcfa4d`
+- complete JSON parser branches:
+  `ev_51f122a1235c5cc8be1324c63d5e5364d376d073417ad71bb9e35c388c158b39`
 
 REA did not execute either APK and no Connect-generation mower was contacted.
 The implemented Connect behavior is therefore shipped-artifact-derived, not a
