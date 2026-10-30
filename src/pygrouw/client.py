@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 import inspect
 import logging
 from typing import Any, TypeAlias
@@ -41,21 +42,32 @@ from .exceptions import (
 )
 from .protocol import (
     BLUEKEY_PREFIX,
+    DAYE_ALERT_QUERY_PAYLOAD,
+    DAYE_LANGUAGE_QUERY_PAYLOAD,
     DAYE_MOWER_SETTINGS_QUERY_PAYLOAD,
     DAYE_MULTI_AREA_QUERY_PAYLOAD,
+    DAYE_RESPONSE_ALERT,
+    DAYE_RESPONSE_LANGUAGE,
     DAYE_RESPONSE_MOWER_SETTINGS,
     DAYE_RESPONSE_MULTI_AREA,
     DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
+    DAYE_RESPONSE_RUNTIME,
     DAYE_RESPONSE_STATUS,
+    DAYE_RESPONSE_TIME,
     DAYE_RESPONSE_WORK_TIME_DURATION,
     DAYE_RESPONSE_WORK_TIME_START,
+    DAYE_RUNTIME_QUERY_PAYLOAD,
+    DAYE_RUNTIME_RESET_PAYLOAD,
+    DAYE_TIME_QUERY_PAYLOAD,
     DAYE_WORK_TIME_QUERY_PAYLOAD,
     encode_daye_change_pin,
     encode_daye_command,
+    encode_daye_language,
     encode_daye_mower_settings,
     encode_daye_multi_area,
     encode_daye_session_start,
+    encode_daye_time,
     encode_daye_work_time_durations,
     encode_daye_work_time_starts,
     encode_raw_payload,
@@ -623,8 +635,66 @@ class GrouwBleMowerClient:
             command_name="status",
         )
 
-    async def async_command(self, command: str) -> dict[str, Any]:
+    async def async_get_time(self) -> dict[str, Any]:
+        """Read the DYM mower clock."""
+        return await self.async_request_daye(
+            DAYE_TIME_QUERY_PAYLOAD,
+            expected_cmd=DAYE_RESPONSE_TIME,
+            command_name="time_query",
+        )
+
+    async def async_sync_time(self, value: datetime) -> dict[str, Any]:
+        """Set the DYM mower clock."""
+        return await self.async_request_daye(
+            encode_daye_time(value),
+            expected_cmd=DAYE_RESPONSE_TIME,
+            command_name="time_set",
+        )
+
+    async def async_get_language(self) -> dict[str, Any]:
+        """Read the DYM mower display language."""
+        return await self.async_request_daye(
+            DAYE_LANGUAGE_QUERY_PAYLOAD,
+            expected_cmd=DAYE_RESPONSE_LANGUAGE,
+            command_name="language_query",
+        )
+
+    async def async_set_language(self, language: str | int) -> dict[str, Any]:
+        """Set the DYM mower display language."""
+        return await self.async_request_daye(
+            encode_daye_language(language),
+            expected_cmd=DAYE_RESPONSE_LANGUAGE,
+            command_name="language_set",
+        )
+
+    async def async_get_alert(self) -> dict[str, Any]:
+        """Read the latest DYM mower alert record."""
+        return await self.async_request_daye(
+            DAYE_ALERT_QUERY_PAYLOAD,
+            expected_cmd=DAYE_RESPONSE_ALERT,
+            command_name="alert_query",
+        )
+
+    async def async_get_runtime(self) -> dict[str, Any]:
+        """Read DYM wheel, blade, and mower runtime counters."""
+        return await self.async_request_daye(
+            DAYE_RUNTIME_QUERY_PAYLOAD,
+            expected_cmd=DAYE_RESPONSE_RUNTIME,
+            command_name="runtime_query",
+        )
+
+    async def async_reset_runtime(self) -> dict[str, Any]:
+        """Reset DYM runtime counters and return the reported counters."""
+        return await self.async_request_daye(
+            DAYE_RUNTIME_RESET_PAYLOAD,
+            expected_cmd=DAYE_RESPONSE_RUNTIME,
+            command_name="runtime_reset",
+        )
+
+    async def async_command(self, command: str, point: int | None = None) -> dict[str, Any]:
         """Send a quiet Daye mower command and refresh status."""
+        if point is not None:
+            raise GrouwBleError("Start-point selection is only supported by Connect mowers")
         return await self.async_request_daye(
             encode_daye_command(command),
             authenticate=False,

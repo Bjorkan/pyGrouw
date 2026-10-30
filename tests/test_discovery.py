@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from pygrouw.const import DAYE_PRIMARY_SERVICE_UUID
+from pygrouw.const import CONNECT_SERVICE_UUID, DAYE_PRIMARY_SERVICE_UUID
 from pygrouw.discovery import (
     discover_devices,
     find_device_by_address,
@@ -39,6 +39,7 @@ def test_discovery_predicates_match_home_assistant_flow() -> None:
     assert not is_valid_pin("12a4")
     assert is_supported_bluetooth_name("Robot Mower_DYM")
     assert has_supported_service_uuid([DAYE_PRIMARY_SERVICE_UUID.upper()])
+    assert has_supported_service_uuid([CONNECT_SERVICE_UUID.upper()])
     assert is_supported_advertisement(None, [DAYE_PRIMARY_SERVICE_UUID])
     assert not is_supported_advertisement("Nearby Speaker", [])
 

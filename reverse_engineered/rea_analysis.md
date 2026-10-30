@@ -1,12 +1,33 @@
 # REA Analysis Ledger
 
-Last updated: 2026-10-30.
+Last updated: 2026-10-31.
 
 This file records compact, non-sensitive findings from REA static inspection.
 The APK, split APKs, extracted native libraries, and generated decompiler output
 remain local-only and must never be committed.
 
 ## Artifact Identity
+
+### Grouw application APKs
+
+REA statically inspected two Grouw-specific APKs used for this library pass:
+
+```text
+Robot Mower V0.3.2
+Package:  com.wifi.dayeapp
+SHA-256: d7317570b68b6b461dd56784303eae363cd083a00035e91110d28e7df23b15b7
+
+Robotic Mower Connect 1.4.5
+Package:  com.cj.lawnmower
+SHA-256: 8b36e348c2c50b301b661c3677dcbffde765cfb9ee75ee2a81a075490c20a916
+```
+
+Package-summary Evidence:
+
+- legacy APK: `ev_6ceb0dae6c49aa943608b646235b35fbc4f41a56e302475270b0a0b7bd8b514b`
+- Connect APK: `ev_0e12f42a95eb49ffed6a0a6b38b5f0e1951402b98f48c01334173865e79204ce`
+
+### Earlier Daye XAPK review
 
 REA inventoried the supplied XAPK as a complete ZIP central-directory view:
 
@@ -123,3 +144,51 @@ library now:
 
 These are static-analysis and capture-informed implementation decisions. They
 do not claim that REA executed the app or observed mower runtime behavior.
+
+## Grouw APK Protocol Expansion
+
+The Grouw V0.3.2 APK exposed additional DYM command layouts now represented by
+the library: manual forward/reverse/left/right/stop, blade start/stop,
+force-stop, clock and language query/write, alert query, and runtime
+query/reset. DYM status parsing also exposes the APK-derived mower type and
+firmware-build fields. Existing real-hardware status captures establish the
+frame shape, but the newly exposed operations have not all been exercised on a
+physical mower.
+
+Robotic Mower Connect uses a separate local protocol:
+
+```text
+Service: 0000fff0-0000-1000-8000-00805f9b34fb
+Notify:  0000fff1-0000-1000-8000-00805f9b34fb
+Write:   0000fff2-0000-1000-8000-00805f9b34fb
+
+Frame:   A4 | payload length (little-endian uint16) | payload XOR | UTF-8 JSON
+Packets: at most 20 bytes each
+Payload: at most 3000 bytes in the recovered implementation
+```
+
+Observed query/response pairs are `200→500` (all info), `201→501` (status),
+`203→503` (schedule), `205→505` (rain), `207→507` (multi-area), `208→508`
+(device information), and `214→514` (feature flags). Work modes are stop `0`,
+work `1`, home `2`, trim `4`, and start-point `5`.
+
+Setter payloads use request command `0`. The response parser recognizes generic
+acknowledgement `400`, rename `502`, PIN result `504`, and work results
+`10100`, `10101`, and `10102`; the client accepts the relevant response family
+and then refreshes all-info state.
+
+Key Evidence:
+
+- Connect frame construction:
+  `ev_703813f4b998297763a2f9f9c5c5fe23fc1e6ac931c1ba94f65fc369eff53c52`
+- notification reassembly and checksum validation:
+  `ev_a200e9bcaf33699773a36342d2f4b0ba9d8019936b8bdb9b81c5f245b13072b5`
+- JSON response parser and command families:
+  `ev_39d4e29f9e2f9580a68bc6e445cd63ee6cd0baef7bc7a489d2d1b85ea22db919`
+- work-mode selection:
+  `ev_b8061b307938c56c1c897523755781bd7429c973aef617716bc4ff0e15f95dd0`
+
+REA did not execute either APK and no Connect-generation mower was contacted.
+The implemented Connect behavior is therefore shipped-artifact-derived, not a
+runtime or hardware validation claim. Cloud APIs and firmware update remain
+outside this local BLE library.

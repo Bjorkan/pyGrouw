@@ -69,9 +69,12 @@ class GrouwMower:
         )
         return self.state
 
-    async def async_command(self, command: str) -> MowerState:
+    async def async_command(self, command: str, *, point: int | None = None) -> MowerState:
         """Send a mower command and update local state from the response."""
-        message = await self.client.async_command(command)
+        if point is None:
+            message = await self.client.async_command(command)
+        else:
+            message = await self.client.async_command(command, point=point)
         self.state = state_from_message(self.client.address, message, self.state)
         return self.state
 
@@ -90,6 +93,46 @@ class GrouwMower:
     async def async_dock(self) -> MowerState:
         """Return the mower to the charging station."""
         return await self.async_command("dock")
+
+    async def async_trim(self) -> MowerState:
+        """Start the Connect-generation edge-trimming mode."""
+        return await self.async_command("trim")
+
+    async def async_start_at_point(self, point: int) -> MowerState:
+        """Start a Connect-generation mower at a configured start point."""
+        return await self.async_command("start_point", point=point)
+
+    async def async_manual_forward(self) -> MowerState:
+        """Drive a DYM-generation mower forward in manual mode."""
+        return await self.async_command("manual_forward")
+
+    async def async_manual_reverse(self) -> MowerState:
+        """Drive a DYM-generation mower backward in manual mode."""
+        return await self.async_command("manual_reverse")
+
+    async def async_manual_left(self) -> MowerState:
+        """Turn a DYM-generation mower left in manual mode."""
+        return await self.async_command("manual_left")
+
+    async def async_manual_right(self) -> MowerState:
+        """Turn a DYM-generation mower right in manual mode."""
+        return await self.async_command("manual_right")
+
+    async def async_manual_stop(self) -> MowerState:
+        """Stop DYM manual driving."""
+        return await self.async_command("manual_stop")
+
+    async def async_start_blade(self) -> MowerState:
+        """Start the DYM cutting blade in manual mode."""
+        return await self.async_command("blade_start")
+
+    async def async_stop_blade(self) -> MowerState:
+        """Stop the DYM cutting blade in manual mode."""
+        return await self.async_command("blade_stop")
+
+    async def async_force_stop(self) -> MowerState:
+        """Send the DYM force-stop command."""
+        return await self.async_command("force_stop")
 
     async def async_send_raw_json(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Send a raw debug payload and update state when status fields exist."""

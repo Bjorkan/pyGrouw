@@ -18,9 +18,11 @@ from pygrouw.protocol import (
     encode_bluekey_language,
     encode_bluekey_payload,
     encode_daye_command,
+    encode_daye_language,
     encode_daye_mower_settings,
     encode_daye_multi_area,
     encode_daye_session_start,
+    encode_daye_time,
     encode_daye_work_time_durations,
     encode_daye_work_time_starts,
     encode_raw_payload,
@@ -43,6 +45,31 @@ def test_encode_daye_session_start_contains_current_time_payload() -> None:
     payload = encode_daye_session_start(datetime(2026, 6, 25, 18, 28))
 
     assert payload.hex() == "44594d02141a0619121c000000000000000000160601ff0a"
+
+
+def test_encode_apk_recovered_daye_time_and_language() -> None:
+    """Clock and language writes match the V0.3.2 BleFrameUtil layout."""
+    from datetime import datetime
+
+    assert encode_daye_time(datetime(2026, 10, 31, 14, 5)).hex() == (
+        "44594d02141a0a1f0e05000000000000000000160601ff0a"
+    )
+    assert encode_daye_language("English").hex() == (
+        "44594d03000000000000000000000000000000160601ff0a"
+    )
+    assert encode_daye_language("Italiano")[4] == 18
+
+
+def test_encode_apk_recovered_manual_commands() -> None:
+    """Manual drive and blade commands expose all V0.3.2 controls."""
+    assert encode_daye_command("manual_forward").hex().startswith("44594d0801")
+    assert encode_daye_command("manual_reverse").hex().startswith("44594d0802")
+    assert encode_daye_command("manual_left").hex().startswith("44594d0803")
+    assert encode_daye_command("manual_right").hex().startswith("44594d0804")
+    assert encode_daye_command("manual_stop").hex().startswith("44594d0805")
+    assert encode_daye_command("blade_start").hex().startswith("44594d0806")
+    assert encode_daye_command("blade_stop").hex().startswith("44594d0807")
+    assert encode_daye_command("force_stop").hex().startswith("44594d0808")
 
 
 def test_encode_raw_payload_accepts_hex_and_command() -> None:
@@ -173,6 +200,8 @@ def test_parse_daye_status_notification_maps_observed_fields() -> None:
         "battery_level": 0x64,
         "mode": 0x00,
         "station": True,
+        "mower_type": 0,
+        "firmware_build": 401,
     }
 
 
@@ -525,6 +554,7 @@ def test_state_from_message_maps_confirmed_dym_fields() -> None:
     assert state.battery_level == 75
     assert state.mode == 0x14
     assert state.station is False
+    assert state.mower_type is None
     assert state.last_response_cmd == 0x80
     assert state.last_seen is not None
     assert state.last_communication == state.last_seen

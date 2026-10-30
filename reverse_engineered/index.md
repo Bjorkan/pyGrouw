@@ -1,6 +1,6 @@
 # Reverse Engineered Protocol Notes
 
-Last updated: 2026-10-30.
+Last updated: 2026-10-31.
 
 This directory is the durable protocol memory for `pyGrouw` and the Home
 Assistant integration that consumes it. Keep raw APKs, decompiler output,
@@ -18,6 +18,8 @@ Read in this order when orienting yourself:
 5. [response_parsing.md](response_parsing.md) - decoded notification fields.
 6. [bluekey_commands.md](bluekey_commands.md) - APK-derived 48-value command
    format used only for debug probes so far.
+7. [connect_protocol.md](connect_protocol.md) - newer FFF0 JSON-over-BLE Grouw
+   generation.
 
 ## File Map
 
@@ -30,6 +32,7 @@ Read in this order when orienting yourself:
 | [response_parsing.md](response_parsing.md) | APK and DYM response parsing notes |
 | [ble_write_flow.md](ble_write_flow.md) | Daye app write/notify flow and state classes |
 | [bluekey_commands.md](bluekey_commands.md) | BlueKey command layout, sub-commands, debug probes |
+| [connect_protocol.md](connect_protocol.md) | Robotic Mower Connect framing, commands, and validation boundary |
 | [dart_blutter_analysis.md](dart_blutter_analysis.md) | Dart AOT/blutter symbol findings |
 | [native_crypto.md](native_crypto.md) | Telink native AES-ATT findings |
 | [java_kotlin_findings.md](java_kotlin_findings.md) | Java/Kotlin plugin, Gizwits, FlutterBluePlus findings |
@@ -38,7 +41,8 @@ Read in this order when orienting yourself:
 
 ## Current Protocol Picture
 
-Home Assistant currently uses the HCI-confirmed DYM protocol:
+The library supports two separate local Grouw protocol generations. Home
+Assistant currently uses the HCI-confirmed DYM protocol:
 
 ```text
 Outbound DYM write: 24 bytes, ASCII prefix "DYM"
@@ -60,6 +64,10 @@ with prefix `[0x88, 0xb2, 0x9a]`. Those findings are useful for research and
 raw debug probes, but normal Home Assistant entities and controls do not use
 BlueKey writes until captures prove the exact on-wire behavior for this mower
 generation.
+
+Robotic Mower Connect uses FFF0/FFF1/FFF2 and A4-framed UTF-8 JSON. This path is
+implemented in `GrouwConnectBleMowerClient` from static APK evidence but is not
+yet hardware-validated.
 
 ## Confirmed Highlights
 
