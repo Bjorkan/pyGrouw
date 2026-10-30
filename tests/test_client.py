@@ -21,6 +21,8 @@ from pygrouw.const import DEFAULT_REQUESTED_MTU
 from pygrouw.protocol import (
     DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
+    DAYE_RESPONSE_WORK_TIME_DURATION,
+    DAYE_RESPONSE_WORK_TIME_START,
     encode_bluekey_command,
     encode_daye_change_pin,
     encode_daye_command,
@@ -609,5 +611,79 @@ def test_multi_step_path_preserves_connection_error_type(
                 [(b"DYM", None, 0, "write", 0)],
                 authenticate=False,
             )
+
+    asyncio.run(run())
+
+
+def test_required_responses_ignore_duplicate_command() -> None:
+    """A work-time query requires one 0x84 and one 0x85 response."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        queue.put_nowait({"cmd": DAYE_RESPONSE_WORK_TIME_START, "sequence": 1})
+        queue.put_nowait({"cmd": DAYE_RESPONSE_WORK_TIME_START, "sequence": 2})
+        queue.put_nowait({"cmd": DAYE_RESPONSE_WORK_TIME_DURATION, "sequence": 3})
+
+        responses = await client._wait_for_required_responses(  # type: ignore[arg-type]
+            queue,
+            {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION},
+            0.1,
+            "work_time",
+        )
+
+        assert [response["cmd"] for response in responses] == [
+            DAYE_RESPONSE_WORK_TIME_START,
+            DAYE_RESPONSE_WORK_TIME_DURATION,
+        ]
+        assert responses[0]["sequence"] == 2
+
+    asyncio.run(run())
+
+
+def test_set_mower_settings_preserves_unknown_field() -> None:
+    """An omitted APK-derived unknown setting is read before writing."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        seen: dict[str, object] = {}
+
+        async def fake_get() -> dict[str, object]:
+            return {"mower_settings": {"unknown_setting": True}}
+
+        async def fake_multi(
+            steps: list[tuple[bytes, int | None | set[int], float, str, int]],
+            **kwargs: object,
+        ) -> list[object]:
+            seen["steps"] = steps
+            return [
+                None,
+                {
+                    "mower_settings": {
+                        "mow_in_rain": False,
+                        "boundary_cut": False,
+                        "unknown_setting": True,
+                        "helix": False,
+                        "rain_delay_hour": 0,
+                        "rain_delay_minute": 0,
+                    }
+                },
+            ]
+
+        client.async_get_mower_settings = fake_get  # type: ignore[method-assign]
+        client._async_request_daye_multi_locked = fake_multi  # type: ignore[method-assign]
+
+        await client.async_set_mower_settings(
+            mow_in_rain=False,
+            boundary_cut=False,
+            helix=False,
+            rain_delay_hours=0,
+            rain_delay_minutes=0,
+        )
+
+        steps = seen["steps"]
+        assert isinstance(steps, list)
+        assert steps[0][0][6] == 1
+        assert steps[1][2] == 0.3
 
     asyncio.run(run())

@@ -19,7 +19,9 @@ from .exceptions import (
     GrouwBleDeviceNotFound,
     GrouwBleError,
     GrouwBleGattError,
+    GrouwBleOperationIndeterminate,
     GrouwBleTimeout,
+    GrouwBleVerificationError,
 )
 from .mower import GrouwMower
 from .protocol import (
@@ -31,6 +33,7 @@ from .protocol import (
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
+    redact_daye_payload,
     state_from_message,
 )
 
@@ -42,7 +45,9 @@ __all__ = [
     "GrouwBleError",
     "GrouwBleGattError",
     "GrouwBleMowerClient",
+    "GrouwBleOperationIndeterminate",
     "GrouwBleTimeout",
+    "GrouwBleVerificationError",
     "GrouwMower",
     "MowerState",
     "discover_devices",
@@ -59,5 +64,6 @@ __all__ = [
     "normalize_address",
     "parse_daye_payload",
     "redact_daye_message",
+    "redact_daye_payload",
     "state_from_message",
 ]

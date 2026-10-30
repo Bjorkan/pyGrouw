@@ -20,6 +20,8 @@ Supported protocol helpers:
 - DYM status, start/resume, pause/stop, dock, session start, and auth query
   payload encoding.
 - DYM status and auth/PIN notification parsing.
+- DYM PIN changes, mower settings, multi-area settings, and weekly work-time
+  query/write helpers with read-back verification.
 - APK-shaped BlueKey debug payload encoding and parsing helpers for protocol
   research.
 - Optional BLE discovery helpers that match the Home Assistant integration's

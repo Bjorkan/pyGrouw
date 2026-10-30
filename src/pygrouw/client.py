@@ -13,6 +13,8 @@ from bleak.backends.device import BLEDevice
 from bleak_retry_connector import establish_connection
 
 from .const import (
+    DAYE_SETTINGS_VERIFY_DELAY,
+    DAYE_WORK_TIME_INTER_WRITE_DELAY,
     DEFAULT_BLE_TIMEOUT,
     DEFAULT_CHUNK_DELAY,
     DEFAULT_NAME,
@@ -26,7 +28,9 @@ from .exceptions import (
     GrouwBleDeviceNotFound,
     GrouwBleError,
     GrouwBleGattError,
+    GrouwBleOperationIndeterminate,
     GrouwBleTimeout,
+    GrouwBleVerificationError,
 )
 from .protocol import (
     BLUEKEY_PREFIX,
@@ -50,6 +54,7 @@ from .protocol import (
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
+    redact_daye_payload,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -225,7 +230,11 @@ class GrouwBleMowerClient:
         try:
             await client.write_gatt_char(WRITE_CHARACTERISTIC_UUID, payload, response=True)
             _LOGGER.debug(
-                "[%s tx=%s] write %s ok payload=%s", self.address, self._tx_id, label, payload.hex()
+                "[%s tx=%s] write %s ok payload=%s",
+                self.address,
+                self._tx_id,
+                label,
+                redact_daye_payload(payload),
             )
         except BLE_BACKEND_EXCEPTIONS as err:
             _LOGGER.error(
@@ -343,6 +352,41 @@ class GrouwBleMowerClient:
                 phase,
                 expected_cmd,
             )
+
+    async def _wait_for_required_responses(
+        self,
+        queue: asyncio.Queue[dict[str, Any]],
+        required_cmds: set[int],
+        timeout: float,
+        phase: str,
+    ) -> list[dict[str, Any]]:
+        """Wait for one valid response for every required command."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        received: dict[int, dict[str, Any]] = {}
+        while missing := required_cmds - received.keys():
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise GrouwBleTimeout(
+                    f"Timeout waiting for {phase} responses {sorted(missing)} from {self.address}"
+                )
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=remaining)
+            except TimeoutError as err:
+                raise GrouwBleTimeout(
+                    f"Timeout waiting for {phase} responses {sorted(missing)} from {self.address}"
+                ) from err
+            cmd = message.get("cmd")
+            if cmd in required_cmds:
+                received[int(cmd)] = message
+            else:
+                _LOGGER.debug(
+                    "[%s tx=%s] ignoring notification cmd=%s in %s",
+                    self.address,
+                    self._tx_id,
+                    cmd,
+                    phase,
+                )
+        return [received[command] for command in sorted(required_cmds)]
 
     def _verify_auth_response_pin(self, message: dict[str, Any], pin: str) -> None:
         """Verify a PIN against the mower auth/PIN response."""
@@ -590,6 +634,9 @@ class GrouwBleMowerClient:
         client: BleakClient | None = None
         notify_started = False
         responses: list[Any] = []
+        completed_steps: list[str] = []
+        active_step: str | None = None
+        write_started = False
         try:
             client = await self._establish_connection(timeout)
             await self._request_mtu_with_log(client)
@@ -613,22 +660,36 @@ class GrouwBleMowerClient:
                 _drain_queue(queue)
 
             for payload, expected_cmd, delay, command_name, collect_count in steps:
+                active_step = command_name
+                write_started = False
                 if delay > 0:
                     await asyncio.sleep(delay)
+                write_started = True
                 await self._write_with_log(client, payload, command_name)
+                completed_steps.append(command_name)
+                write_started = False
                 if collect_count > 0:
-                    collected: list[dict[str, Any]] = []
-                    for _ in range(collect_count):
-                        response = await self._wait_for_response(
+                    if isinstance(expected_cmd, set) and collect_count > 1:
+                        collected = await self._wait_for_required_responses(
                             queue,
                             expected_cmd,
                             timeout,
                             command_name,
                         )
-                        collected.append(response)
+                    else:
+                        collected = [
+                            await self._wait_for_response(
+                                queue,
+                                expected_cmd,
+                                timeout,
+                                command_name,
+                            )
+                            for _ in range(collect_count)
+                        ]
                     responses.append(collected if collect_count > 1 else collected[0])
                 else:
                     responses.append(None)
+                active_step = None
 
             return responses
 
@@ -638,7 +699,14 @@ class GrouwBleMowerClient:
             GrouwBleDeviceNotFound,
             GrouwBleGattError,
             GrouwBleTimeout,
-        ):
+        ) as err:
+            if completed_steps or write_started:
+                raise GrouwBleOperationIndeterminate(
+                    f"BLE operation may be partially applied after step {active_step}",
+                    completed_steps=tuple(completed_steps),
+                    failed_step=active_step,
+                    write_may_have_completed=write_started,
+                ) from err
             raise
         except BLE_BACKEND_EXCEPTIONS as err:
             raise GrouwBleError(f"Unexpected BLE error on {self.address}: {err}") from err
@@ -672,8 +740,6 @@ class GrouwBleMowerClient:
         area3_distance: int,
     ) -> dict[str, Any]:
         """Write multi-area settings, verify with query, and return query response."""
-        from .exceptions import GrouwBleError
-
         async with self._request_lock:
             result = await self._async_request_daye_multi_locked(
                 [
@@ -685,14 +751,14 @@ class GrouwBleMowerClient:
                             area3_distance=area3_distance,
                         ),
                         None,
-                        DEFAULT_CHUNK_DELAY,
+                        0,
                         "multi_area_write",
                         0,
                     ),
                     (
                         DAYE_MULTI_AREA_QUERY_PAYLOAD,
                         DAYE_RESPONSE_MULTI_AREA,
-                        DEFAULT_CHUNK_DELAY,
+                        DAYE_SETTINGS_VERIFY_DELAY,
                         "multi_area_verify",
                         1,
                     ),
@@ -709,7 +775,7 @@ class GrouwBleMowerClient:
                     "area3_distance": area3_distance,
                 }
                 if multi != expected:
-                    raise GrouwBleError("Multi-area verification failed")
+                    raise GrouwBleVerificationError("Multi-area verification failed")
             return response
 
     async def async_get_mower_settings(self) -> dict[str, Any]:
@@ -730,10 +796,18 @@ class GrouwBleMowerClient:
         helix: bool,
         rain_delay_hours: int,
         rain_delay_minutes: int,
-        unknown_setting: bool = False,
+        unknown_setting: bool | None = None,
     ) -> dict[str, Any]:
-        """Write mower settings via DYM 0x09 and verify with a follow-up query."""
-        from .exceptions import GrouwBleError
+        """Write mower settings while preserving an omitted unknown field."""
+        if unknown_setting is None:
+            current = await self.async_get_mower_settings()
+            current_settings = current.get("mower_settings", {})
+            preserved = current_settings.get("unknown_setting")
+            if not isinstance(preserved, bool):
+                raise GrouwBleVerificationError(
+                    "Cannot preserve unknown mower setting without a valid read"
+                )
+            unknown_setting = preserved
 
         async with self._request_lock:
             result = await self._async_request_daye_multi_locked(
@@ -748,14 +822,14 @@ class GrouwBleMowerClient:
                             unknown_setting=unknown_setting,
                         ),
                         None,
-                        DEFAULT_CHUNK_DELAY,
+                        0,
                         "mower_settings_write",
                         0,
                     ),
                     (
                         DAYE_MOWER_SETTINGS_QUERY_PAYLOAD,
                         DAYE_RESPONSE_MOWER_SETTINGS,
-                        DEFAULT_CHUNK_DELAY,
+                        DAYE_SETTINGS_VERIFY_DELAY,
                         "mower_settings_verify",
                         1,
                     ),
@@ -775,7 +849,7 @@ class GrouwBleMowerClient:
                 }
                 for key, value in expected.items():
                     if settings.get(key) != value:
-                        raise GrouwBleError("Mower settings verification failed")
+                        raise GrouwBleVerificationError("Mower settings verification failed")
             return response
 
     async def async_get_work_times(self) -> dict[str, Any]:
@@ -801,7 +875,9 @@ class GrouwBleMowerClient:
                 if "work_time_durations" in msg:
                     combined["work_time_durations"] = msg["work_time_durations"]
             if combined["work_time_starts"] is None or combined["work_time_durations"] is None:
-                raise GrouwBleError("Work-time query response missing start times or durations")
+                raise GrouwBleVerificationError(
+                    "Work-time query response missing start times or durations"
+                )
             return combined
 
     async def async_set_work_times(
@@ -816,21 +892,21 @@ class GrouwBleMowerClient:
                     (
                         encode_daye_work_time_starts(starts),
                         None,
-                        DEFAULT_CHUNK_DELAY,
+                        0,
                         "work_time_starts",
                         0,
                     ),
                     (
                         encode_daye_work_time_durations(durations),
                         None,
-                        DEFAULT_CHUNK_DELAY,
+                        DAYE_WORK_TIME_INTER_WRITE_DELAY,
                         "work_time_durations",
                         0,
                     ),
                     (
                         DAYE_WORK_TIME_QUERY_PAYLOAD,
                         {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION},
-                        DEFAULT_CHUNK_DELAY,
+                        DAYE_SETTINGS_VERIFY_DELAY,
                         "work_time_verify",
                         2,
                     ),
@@ -846,7 +922,9 @@ class GrouwBleMowerClient:
                 if "work_time_durations" in msg:
                     verified_durations = msg["work_time_durations"]
             if verified_starts is None or verified_durations is None:
-                raise GrouwBleError("Work-time write verification response missing data")
+                raise GrouwBleVerificationError(
+                    "Work-time write verification response missing data"
+                )
             days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
             expected_starts = [
                 {"day": day, "hour": hour, "minute": minute}
@@ -857,9 +935,9 @@ class GrouwBleMowerClient:
                 for day, (hours, tenths) in zip(days, durations, strict=True)
             ]
             if verified_starts != expected_starts:
-                raise GrouwBleError("Work-time starts verification failed")
+                raise GrouwBleVerificationError("Work-time starts verification failed")
             if verified_durations != expected_durations:
-                raise GrouwBleError("Work-time durations verification failed")
+                raise GrouwBleVerificationError("Work-time durations verification failed")
             return {
                 "starts_write": result[0],
                 "durations_write": result[1],

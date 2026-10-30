@@ -1,6 +1,6 @@
 # Reverse Engineered Protocol Notes
 
-Last updated: 2026-06-27.
+Last updated: 2026-10-30.
 
 This directory is the durable protocol memory for `pyGrouw` and the Home
 Assistant integration that consumes it. Keep raw APKs, decompiler output,
@@ -34,6 +34,7 @@ Read in this order when orienting yourself:
 | [native_crypto.md](native_crypto.md) | Telink native AES-ATT findings |
 | [java_kotlin_findings.md](java_kotlin_findings.md) | Java/Kotlin plugin, Gizwits, FlutterBluePlus findings |
 | [manual_findings.md](manual_findings.md) | Local Grouw manual findings and model boundaries |
+| [rea_analysis.md](rea_analysis.md) | REA artifact identity, coverage, and evidence ledger |
 
 ## Current Protocol Picture
 

@@ -24,6 +24,7 @@ from pygrouw.protocol import (
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
+    redact_daye_payload,
     state_from_message,
 )
 
@@ -98,23 +99,33 @@ def test_parse_daye_payload_ignores_non_dym_payload() -> None:
     assert parse_daye_payload(bytes.fromhex("01020304")) is None
 
 
-def test_parse_daye_payload_does_not_decode_short_status_payload() -> None:
-    """Only the captured 22-byte DYM status shape is decoded as state."""
-    message = parse_daye_payload(bytes.fromhex("44594d806400160601"))
+def test_parse_daye_payload_rejects_short_status_payload() -> None:
+    """Known DYM responses require the complete captured 22-byte frame."""
+    assert parse_daye_payload(bytes.fromhex("44594d806400160601")) is None
 
-    assert message == {
-        "raw_hex": "44594d806400160601",
-        "cmd": 0x80,
-        "trailer": "160601",
-    }
+
+def test_parse_daye_payload_rejects_known_response_with_bad_trailer() -> None:
+    """Known response commands cannot bypass frame validation."""
+    payload = bytes.fromhex("44594d8064331b010004000100444100000000160602")
+
+    assert parse_daye_payload(payload) is None
+
+
+def test_parse_daye_payload_rejects_out_of_range_status_battery() -> None:
+    """A percentage candidate outside 0..100 is not exposed as battery state."""
+    message = parse_daye_payload(bytes.fromhex("44594d8065331b010004000100444100000000160601"))
+
+    assert message is not None
+    assert "battery_level" not in message
+    assert message["mode"] == 0
 
 
 def test_parse_daye_auth_response_extracts_numeric_pin_digits() -> None:
     """The auth/PIN response exposes the mower PIN as four digit bytes."""
-    message = parse_daye_payload(bytes.fromhex("44594d8c0102030400000000000000000000160601"))
+    message = parse_daye_payload(bytes.fromhex("44594d8c010203040000000000000000000000160601"))
 
     assert message == {
-        "raw_hex": "44594d8c0102030400000000000000000000160601",
+        "raw_hex": "44594d8c010203040000000000000000000000160601",
         "cmd": 0x8C,
         "trailer": "160601",
         "mower_pin": "1234",
@@ -195,7 +206,7 @@ def test_parse_daye_multi_area_response() -> None:
 
 def test_parse_daye_multi_area_response_non_zero_distance() -> None:
     """Non-zero distances are correctly decoded from decimal-chunk bytes."""
-    message = parse_daye_payload(bytes.fromhex("44594d8d0501000110000704160601"))
+    message = parse_daye_payload(bytes.fromhex("44594d8d050100011000070400000000000000160601"))
 
     assert message is not None
     assert message["multi_area"] == {
@@ -273,7 +284,6 @@ def test_parse_daye_mower_settings_response() -> None:
         "helix": False,
         "rain_delay_hour": 0,
         "rain_delay_minute": 0,
-        "led": False,
     }
 
 
@@ -344,6 +354,15 @@ def test_redact_daye_message_hides_pin_and_auth_pin_bytes() -> None:
         "cmd": 0x8C,
         "mower_pin": "****",
     }
+
+
+def test_redact_daye_payload_hides_outbound_pin_change_digits() -> None:
+    """PIN digits must not leak from successful GATT write logging."""
+    from pygrouw.protocol import encode_daye_change_pin
+
+    payload = encode_daye_change_pin("1234", "4321")
+
+    assert redact_daye_payload(payload) == ("44594d06****************00000000000000160601ff0a")
 
 
 def test_parse_bluekey_query_pin_extracts_and_redacts_pin() -> None:
@@ -426,3 +445,16 @@ def test_state_from_message_maps_confirmed_dym_fields() -> None:
     assert state.station is False
     assert state.last_response_cmd == 0x80
     assert state.last_seen is not None
+    assert state.last_communication == state.last_seen
+
+
+def test_state_from_non_status_message_does_not_mark_state_available() -> None:
+    """Authentication traffic is communication, not a fresh status observation."""
+    state = state_from_message(
+        "AA:BB:CC:DD:EE:FF",
+        {"cmd": 0x8C, "mower_pin": "1234"},
+    )
+
+    assert state.last_communication is not None
+    assert state.last_seen is None
+    assert state.available is False
