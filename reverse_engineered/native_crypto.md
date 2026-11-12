@@ -136,3 +136,50 @@ libBLEasyConfig.so   BLE EasyConfig / Wi-Fi provisioning, not DYM control
 libGizWifiDaemon.so  Gizwits SDK daemon support
 libSDKLog.so         Gizwits logging support
 ```
+
+## Telink UUID Table (`com.telink.crypto.UuidInformation`)
+
+The Java wrapper `com.telink.crypto.UuidInformation` is an enum whose static
+initializer hardcodes the Telink reference BLE UUIDs used by the Gizwits mesh
+path. These are NOT the DYM `49535343-...` service; they are the vendor-neutral
+"Telink SmartLight Service" set used by the Gizwits `BluetoothChannelEngine`.
+
+```text
+TELINK_SERVICE               00010203-0405-0607-0809-0a0b0c0d1910  "Telink SmartLight Service"
+TELINK_CHARACTERISTIC_PAIR   00010203-0405-0607-0809-0a0b0c0d1914  "pair"
+TELINK_CHARACTERISTIC_COMMAND 00010203-0405-0607-0809-0a0b0c0d1912 "command"
+TELINK_CHARACTERISTIC_NOTIFY 00010203-0405-0607-0809-0a0b0c0d1911  "notify"
+TELINK_CHARACTERISTIC_OTA    00010203-0405-0607-0809-0a0b0c0d1913  "ota"
+
+SERVICE_DEVICE_INFORMATION   0000180a-0000-1000-8000-00805f9b34fb
+CHARACTERISTIC_FIRMWARE      00002a26-0000-1000-8000-00805f9b34fb
+CHARACTERISTIC_MANUFACTURER  00002a29-0000-1000-8000-00805f9b34fb
+CHARACTERISTIC_MODEL         00002a24-0000-1000-8000-00805f9b34fb
+CHARACTERISTIC_HARDWARE      00002a27-0000-1000-8000-00805f9b34fb
+```
+
+Evidence: `ev_54d056236cc6cfc5080e3a357aa2ae2dcbb6313859efb95e4652cf422e77f28a`.
+
+## Manufacture Factory Config (`com.telink.crypto.Manufacture`)
+
+`Manufacture` carries per-vendor factory secrets used as AES-ATT key-derivation
+inputs. Its fields are `factoryName` (String), `factoryPassword` (String),
+`factoryLtk` (byte[]), `vendorId` (int), `version` (String), `info` (String),
+`otaSize` / `otaDelay` (int), and a `uuidMap` keyed by UUID role. A `Builder`
+inner class exposes `setFactoryName/setFactoryPassword/setFactoryLtk` and the
+per-role UUID setters, and `getFactoryLtk()/getFactoryPassword()/getFactoryName()`
+return the configured values. `getDefaultManufacture()` returns the static
+`DEFAULT_MANUFACTURE`; `getDefinitionManufacture()` returns the
+runtime-set `definitionManufacture`.
+
+Static incoming-reference tracing shows `Manufacture` and `AES` are referenced
+only from the Gizwits SDK (`com.gizwits.gizwifisdk.api.SDKEventManager` and
+`com.gizwits.gizwifisdk.api.GizMeshLocalControlCenter`), not from the Daye app's
+own DYM/BlueKey Dart path. The factory LTK/password are therefore Gizwits-mesh
+inputs, not DYM control inputs.
+
+The `Manufacture.<clinit>` body (which builds `DEFAULT_MANUFACTURE`) could not be
+disassembled by the JADX provider for this APK; its literal factory values remain
+unrecovered from Java. The Gizwits SDK sets them at runtime.
+
+Evidence: `ev_1d28d1a54eed15e8c609fd6eb8fa3dbb91ad7637b8ae07ce23c172c6fef0ac78`.

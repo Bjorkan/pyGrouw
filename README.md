@@ -1,8 +1,7 @@
 # pyGrouw
 
 Python library for local Bluetooth Low Energy communication with Grouw robotic
-mowers. It supports both the legacy DYM generation and the newer JSON-over-BLE
-generation used by Robotic Mower Connect.
+mowers using the DYM protocol generation.
 
 This package contains the device/protocol code intended to be used by Home
 Assistant integrations and other Python applications. It has no Home Assistant
@@ -10,9 +9,7 @@ runtime dependency.
 
 ## Status
 
-The legacy DYM path is informed by app analysis and redacted real-hardware
-captures. The newer Connect path was statically recovered from Robotic Mower
-Connect 1.4.5 and has not yet been validated against physical hardware.
+The DYM path is informed by app analysis and redacted real-hardware captures.
 
 Durable protocol and reverse-engineering notes live in
 [reverse_engineered/index.md](reverse_engineered/index.md).
@@ -21,18 +18,8 @@ Supported protocol helpers:
 
 - DYM status, start/resume, pause/stop, dock, session start, and auth query
   payload encoding.
-- DYM manual driving, blade control, force stop, clock, language, alert, and
-  runtime commands and response parsing.
 - DYM PIN changes, mower settings, multi-area settings, and weekly work-time
   query/write helpers with read-back verification.
-- Connect A4/length/XOR framing and fragmented notification reassembly for the
-  FFF0 service with FFF1 notify and FFF2 write characteristics.
-- Connect status, device information, battery information, feature flags, rain,
-  multi-area, and schedule queries.
-- Connect work/stop/home/trim/start-point control plus rain, ultrasonic,
-  language, PIN, clock, device name, Wi-Fi provisioning, LED, multi-area, and
-  schedule setters, GPS/electronic-feature control, PIN verification, map reset,
-  and device reset.
 - Standard GATT Device Information reads for model, serial, firmware, hardware,
   software, manufacturer, and System ID fields exposed by the mower.
 - APK-shaped BlueKey debug payload encoding and parsing helpers for protocol
@@ -86,31 +73,9 @@ state = await mower.async_update_device_information()
 await mower.async_start()
 ```
 
-For a mower supported by Robotic Mower Connect, use the Connect client:
-
-```python
-from pygrouw import GrouwConnectBleMowerClient, GrouwMower
-
-client = GrouwConnectBleMowerClient(
-    address="AA:BB:CC:DD:EE:FF",
-    name="Grouw Mower",
-    pin="1234",
-    device_provider=lambda: ble_device,
-)
-mower = GrouwMower(client)
-
-state = await mower.async_update()
-await mower.async_start()
-await mower.async_trim()
-await mower.async_start_at_point(2)
-```
-
-Generation-specific settings are available on the lower-level clients. For
-example, `GrouwBleMowerClient` exposes DYM mower settings, multi-area, work
-times, clock, language, alert, and runtime methods;
-`GrouwConnectBleMowerClient` exposes Connect battery/feature/rain/schedule/
-multi-area queries and its recovered local setters and reset operations. These
-Connect methods are based on static APK evidence and remain hardware-unvalidated.
+Generation-specific settings are available on the lower-level client. For
+example, `GrouwBleMowerClient` exposes DYM mower settings, multi-area, and
+work-time query/write methods.
 
 `async_update_device_information()` populates the model, serial number, and
 firmware revision fields already present in `MowerState`. The lower-level

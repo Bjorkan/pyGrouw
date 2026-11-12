@@ -53,6 +53,51 @@ Responses arrive via `didReceiveAttrStatus`, with raw binary data converted to
 `device2Json` serializes fields such as `mac`, `did`, `productKey`,
 `ipAddress`, `isLAN`, `netStatus`, and `netType`.
 
+## DayeGizPlugin MethodChannel API
+
+`DayeGizPlugin.onMethodCall` dispatches the full `daye_giz_plugin` channel
+surface through `GizWifiSDKProxy`. The complete switch (recovered from the base
+APK, Evidence `ev_ab65870444e9f39377e68ad513b75423a68c4b24881a2194d4b4eda784b4291e`)
+is:
+
+```text
+getBoundDevices, unbindDevice, registerUser, setCustomInfo, getSSIDList,
+changeUserInfo, getSDKVersion, changeUserPassword, resetPassword, start, write,
+setDeviceOnboardingDeploy, userLogin, getDeviceList, getDeviceStatus,
+setDeviceOnboardAirLink, stopDeviceOnboarding, getPlatformVersion, userLogout,
+bindRemoteDevice, getUserInfo, setSubscribe
+```
+
+This is entirely Gizwits cloud/onboarding/account surface. None of these methods
+perform the local DYM/BlueKey mower control; that path lives in the Dart layer
+through FlutterBluePlus. The `bt_control_mower`, `bt_rain_delay_setting`,
+`changeMowerControl`, and `getMowerSetting` strings found in `libapp.so` are
+Dart/Gizwits-SDK identifiers, not `DayeGizPlugin` channel method names.
+
+`App.onCreate` only calls `MultiDex.install(this)`; there is no app-level SDK
+bootstrap in Java.
+
+Evidence: `ev_16abdadb031193ffe6da6d4e95705d2719989301f6576823f2408a3b284f3993`.
+
+## Gizwits BLE Mesh Channel (`BluetoothChannelEngine`)
+
+`com.gizwits.gizwifisdk.api.BluetoothChannelEngine` is a complete, separate BLE
+protocol engine from the DYM/BlueKey path. It carries `serviceUUID`,
+`commandUUID`, and `notifyUUID` fields (populated from `Manufacture`), a
+`HEAD_CODE`, `FLAG_0_CODE` / `FLAG_1_CODE`, and command framing helpers
+(`isCmdHead`, `getCmdCode`, `getCmdContent`, `getCmdLength`, `mergeCmd`,
+`makeFlag0Cmd`, `makeFlag1Cmd`). It also implements pairing/login
+(`loginDevice`, `getPasscode`), command dispatch (`sendCommand`,
+`controlDeviceWithDid`, `controlDeviceWithOutDid`), and a BLE OTA flow
+(`checkDeviceCanUpdate`, `updatePreCheckInfo`, `updateContinueInfo`,
+`updateCompleteInfo`, `SEND_OTA_DATA_CALLBACK_CODE`).
+
+This is the Gizwits mesh local-control channel, which uses the Telink
+`00010203-...` UUIDs and AES-ATT crypto. It is distinct from the FlutterBluePlus
+DYM/BlueKey channel used for the `49535343-...` mower service. The app therefore
+bundles both a Dart-side BLE path and a Gizwits-SDK BLE mesh path; which one a
+given firmware uses is not established by static evidence alone.
+
 ## AppConfig
 
 Gizwits cloud credentials found in the APK:

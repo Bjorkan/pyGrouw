@@ -52,28 +52,6 @@ DAYE_RESPONSE_WORK_TIME_DURATION = 0x85
 
 DAYE_WORK_TIME_QUERY_PAYLOAD = bytes.fromhex("44594d14000000000000000000000000000000160601ff0a")
 DAYE_RESPONSE_STATUS = 0x80
-DAYE_RESPONSE_TIME = 0x82
-DAYE_RESPONSE_LANGUAGE = 0x83
-DAYE_RESPONSE_ALERT = 0x8E
-DAYE_RESPONSE_RUNTIME = 0x8F
-DAYE_RESPONSE_BLADE_RUNTIME = 0x7F
-
-DAYE_TIME_QUERY_PAYLOAD = bytes.fromhex("44594d12000000000000000000000000000000160601ff0a")
-DAYE_LANGUAGE_QUERY_PAYLOAD = bytes.fromhex("44594d13000000000000000000000000000000160601ff0a")
-DAYE_ALERT_QUERY_PAYLOAD = bytes.fromhex("44594d1e010000000000000000000000000000160601ff0a")
-DAYE_RUNTIME_QUERY_PAYLOAD = bytes.fromhex("44594d1f000000000000000000000000000000160601ff0a")
-DAYE_RUNTIME_RESET_PAYLOAD = bytes.fromhex("44594d1f010000000000000000000000000000160601ff0a")
-
-DAYE_MANUAL_COMMANDS = {
-    "manual_forward": bytes.fromhex("44594d08010000000000000000000000000000160601ff0a"),
-    "manual_reverse": bytes.fromhex("44594d08020000000000000000000000000000160601ff0a"),
-    "manual_left": bytes.fromhex("44594d08030000000000000000000000000000160601ff0a"),
-    "manual_right": bytes.fromhex("44594d08040000000000000000000000000000160601ff0a"),
-    "manual_stop": bytes.fromhex("44594d08050000000000000000000000000000160601ff0a"),
-    "blade_start": bytes.fromhex("44594d08060000000000000000000000000000160601ff0a"),
-    "blade_stop": bytes.fromhex("44594d08070000000000000000000000000000160601ff0a"),
-    "force_stop": bytes.fromhex("44594d08080000000000000000000000000000160601ff0a"),
-}
 
 
 BLUEKEY_QUERY_INFO = 0x00
@@ -145,7 +123,6 @@ BLUEKEY_LANGUAGES = (
     "Italiano",
 )
 BLUEKEY_LANGUAGE_CODES = tuple(index * 2 for index in range(len(BLUEKEY_LANGUAGES)))
-DAYE_LANGUAGES = BLUEKEY_LANGUAGES
 
 
 def _looks_like_pin_digits(payload: bytes) -> bool:
@@ -331,52 +308,7 @@ def encode_daye_command(command: str) -> bytes:
         return DAYE_AUTH_QUERY
     if command == "session_start":
         return encode_daye_session_start()
-    if command == "time_query":
-        return DAYE_TIME_QUERY_PAYLOAD
-    if command == "language_query":
-        return DAYE_LANGUAGE_QUERY_PAYLOAD
-    if command == "alert_query":
-        return DAYE_ALERT_QUERY_PAYLOAD
-    if command == "runtime_query":
-        return DAYE_RUNTIME_QUERY_PAYLOAD
-    if command == "runtime_reset":
-        return DAYE_RUNTIME_RESET_PAYLOAD
-    if command in DAYE_MANUAL_COMMANDS:
-        return DAYE_MANUAL_COMMANDS[command]
     raise ValueError(f"Unsupported Daye command: {command}")
-
-
-def _encode_daye_data_command(command: int, data: bytes) -> bytes:
-    """Build a 24-byte DYM command with an eight-byte application field."""
-    if len(data) != 8:
-        raise ValueError("DYM application data must contain exactly 8 bytes")
-    return DYM_PREFIX + bytes((command,)) + data + b"\x00" * 7 + DYM_TRAILER
-
-
-def encode_daye_time(value: datetime) -> bytes:
-    """Set the mower clock using the layout from the Grouw V0.3.2 app."""
-    year = value.year
-    if not 0 <= year <= 0xFFFF:
-        raise ValueError("year must fit in 16 bits")
-    return _encode_daye_data_command(
-        0x02,
-        bytes((year // 100, year % 100, value.month, value.day, value.hour, value.minute, 0, 0)),
-    )
-
-
-def encode_daye_language(language: str | int) -> bytes:
-    """Set one of the 19 languages supported by the DYM-era Grouw app."""
-    if isinstance(language, int):
-        code = language
-    else:
-        normalized = language.strip().lower()
-        try:
-            code = next(i for i, item in enumerate(DAYE_LANGUAGES) if item.lower() == normalized)
-        except StopIteration as err:
-            raise ValueError(f"Unknown Daye language: {language}") from err
-    if not 0 <= code < len(DAYE_LANGUAGES):
-        raise ValueError(f"Unknown Daye language code: {code}")
-    return _encode_daye_data_command(0x03, bytes((code,)) + b"\x00" * 7)
 
 
 def _encode_daye_pin_digits(pin: str) -> bytes:
@@ -683,15 +615,10 @@ def parse_daye_payload(
 
     command = payload[3]
     known_commands = {
-        DAYE_RESPONSE_BLADE_RUNTIME,
         DAYE_RESPONSE_STATUS,
-        DAYE_RESPONSE_TIME,
-        DAYE_RESPONSE_LANGUAGE,
         DAYE_RESPONSE_PIN_OR_AUTH,
         DAYE_RESPONSE_PIN_CHANGE,
         DAYE_RESPONSE_MULTI_AREA,
-        DAYE_RESPONSE_ALERT,
-        DAYE_RESPONSE_RUNTIME,
         DAYE_RESPONSE_MOWER_SETTINGS,
         DAYE_RESPONSE_WORK_TIME_START,
         DAYE_RESPONSE_WORK_TIME_DURATION,
@@ -719,28 +646,6 @@ def parse_daye_payload(
         message["mode"] = payload[12]
         if payload[7] in (0x00, 0x01):
             message["station"] = payload[7] == 0x01
-        message["mower_type"] = payload[8]
-        message["firmware_build"] = payload[9] * 100 + payload[10] * 10 + payload[11]
-    elif command == DAYE_RESPONSE_TIME:
-        year = payload[4] * 100 + payload[5]
-        try:
-            clock = datetime(year, payload[6], payload[7], payload[8], payload[9], tzinfo=UTC)
-        except ValueError:
-            return None
-        message["mower_time"] = clock.isoformat()
-        message["mower_time_components"] = {
-            "year": year,
-            "month": payload[6],
-            "day": payload[7],
-            "hour": payload[8],
-            "minute": payload[9],
-        }
-    elif command == DAYE_RESPONSE_LANGUAGE:
-        code = payload[4]
-        if code >= len(DAYE_LANGUAGES):
-            return None
-        message["language_code"] = code
-        message["language"] = DAYE_LANGUAGES[code]
     elif command == DAYE_RESPONSE_PIN_OR_AUTH:
         pin_bytes = payload[4:8]
         if _looks_like_pin_digits(pin_bytes):
@@ -763,26 +668,6 @@ def parse_daye_payload(
             "area3_percentage": payload[8],
             "area3_distance": distance3,
         }
-    elif command == DAYE_RESPONSE_ALERT:
-        year = payload[4] * 256 + payload[5]
-        message["alert"] = {
-            "year": year,
-            "month": payload[6],
-            "day": payload[7],
-            "hour": payload[8],
-            "minute": payload[9],
-            "second": payload[10],
-            "code": payload[11],
-            "code_character": chr(payload[11]) if 32 <= payload[11] <= 126 else None,
-        }
-    elif command == DAYE_RESPONSE_RUNTIME:
-        message["runtime"] = {
-            "wheel_motor": int.from_bytes(payload[4:8], "big"),
-            "blade_motor": int.from_bytes(payload[8:12], "big"),
-            "mower": int.from_bytes(payload[12:16], "big"),
-        }
-    elif command == DAYE_RESPONSE_BLADE_RUNTIME:
-        message["blade_runtime"] = int.from_bytes(payload[4:8], "big")
     elif command == DAYE_RESPONSE_MOWER_SETTINGS:
         if not _valid_bool_bytes(payload, (4, 5, 6, 7)):
             return None
@@ -854,8 +739,6 @@ class MowerState:
     model: str | None = None
     serial: str | None = None
     firmware_version: str | None = None
-    mower_type: int | None = None
-    firmware_build: int | None = None
     battery_level: int | None = None
     mode: int | None = None
     station: bool | None = None
@@ -883,9 +766,7 @@ def state_from_message(
         "last_response_cmd": cmd,
         "last_communication": now,
     }
-    is_status = cmd == DAYE_RESPONSE_STATUS or (
-        message.get("protocol") == "connect" and cmd in (201, 500, 501)
-    )
+    is_status = cmd == DAYE_RESPONSE_STATUS
     if is_status and any(key in message for key in ("battery_level", "mode", "station")):
         updates["last_seen"] = now
 
@@ -896,9 +777,7 @@ def state_from_message(
 
     for src, dst in (
         ("battery_level", "battery_level"),
-        ("firmware_build", "firmware_build"),
         ("mode", "mode"),
-        ("mower_type", "mower_type"),
     ):
         value = _optional_int(message, src)
         if value is not None:

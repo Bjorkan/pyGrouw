@@ -238,25 +238,73 @@ pages/language_setting/logic.dart 0x666c88  getLanguage (0x26)
 
 ## Package Paths Found
 
-Representative package paths from `libapp.so` strings:
+Complete `package:romow_bluetooth/` page set recovered from `libapp.so` strings:
 
 ```text
-common/config/blue_key.dart
-common/services/gizwits_service.dart
-common/util/dialog/dialog_util.dart
-common/util/pop_scope_util.dart
+common/config/{blue_key,constants,app_cache,app_theme}.dart
+common/localization/string_*.dart            (19 language string tables)
+common/network/api/api_service.dart
+common/network/base/dio_service.dart
+common/services/{gizwits_service,global_service}.dart
+common/util/{helper,pop_scope_util,...}.dart
+pages/add_robot/{binding,logic,state,view}.dart
+pages/add_robot/wiget/input_card.dart
+pages/add_robot_type/{binding,logic,state,view}.dart
 pages/add_robot_model/{binding,logic,state,view}.dart
 pages/add_robot_model/widget/robot_type_{1,2,3,4}.dart
-pages/add_robot_finish/state.dart
-pages/change_pin/logic.dart
-pages/device/state.dart
-pages/forgot_password/view.dart
-pages/language_setting/state.dart
-pages/main/view.dart
+pages/add_robot_finish/{binding,logic,state,view}.dart
+pages/change_pin/{binding,logic,state,view}.dart
+pages/change_pin/wiget/input_pin_card.dart
+pages/device/{binding,logic,state,view}.dart
+pages/device_list/{binding,logic,state,view}.dart
+pages/device_list/widget/edit_name_dialog.dart
+pages/device_list_wi_fi/{binding,logic,state,view}.dart
+pages/forgot_password/{binding,logic,state,view}.dart
+pages/information/{logic,state,view}.dart
+pages/language_setting/{binding,logic,state,view}.dart
+pages/language_setting/widget/choose.dart
+pages/logout/{binding,logic,state,view}.dart
+pages/main/{binding,logic,state,view}.dart
+pages/main/widget/input_pin.dart
 pages/mower_firmware_update/{binding,logic,state,view}.dart
-pages/mower_setting/logic.dart
-pages/mower_status/logic.dart
+pages/mower_setting/{binding,logic,state,view}.dart
+pages/mower_status/{logic,state,view}.dart
+pages/multi_area_mowing/{binding,logic,state,view}.dart
 pages/multi_area_mowing/widget/input_card.dart
-pages/privacy_policy/view.dart
-pages/working_time_setting/logic.dart
+pages/privacy_policy/{binding,logic,state,view}.dart
+pages/register/{binding,logic,state,view}.dart
+pages/setting/{logic,state,view}.dart
+pages/sign_in/{binding,logic,state,view}.dart
+pages/sign_in/widget/input_card.dart
+pages/working_time_setting/{binding,logic,state,view}.dart
 ```
+
+The account/device-management pages (`add_robot`, `add_robot_type`,
+`device_list`, `device_list_wi_fi`, `information`, `logout`, `setting`,
+`register`, `sign_in`) are Gizwits cloud flows and are not part of the local
+DYM/BlueKey control path.
+
+## Mower Model / Version Gating
+
+The settings page gates options by model/version strings. The complete model
+identifier set recovered from `libapp.so` is:
+
+```text
+DM104  DM304
+DY002  DY012  DY022(x)  DY052  DY112  DY122  DY142  DY162
+GY002  GY012  GY022     GY052  GY112  GY122  GY142  GY162
+```
+
+The earlier note listed only `DY002/DY052/DY012/DY112/GY002/GY052/GY012/GY112`.
+`DY022` appears with a trailing marker (recovered as `DY022x`), and `DM104`,
+`DM304`, `DY122/DY142/DY162`, and `GY022/GY122/GY142/GY162` extend the prior
+list. The `ultrasound` setting name (matching DYM mower-settings byte 6) is
+present as both `ultrasound` and `Ultrasound` in the Dart string pool.
+
+## Firmware Update Flow
+
+`pages/mower_firmware_update` is a guided manual process, not a pure BLE command
+sequence. Its instruction strings direct the user to press physical keys on the
+mower's keypad (for example press `2` for "Boot Mode, Firmware 2-Update") and
+include `assets/images/update_tip_1.jpg` through `update_tip_4.jpg`. Firmware
+update therefore remains outside the local BLE library.

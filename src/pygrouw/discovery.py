@@ -9,7 +9,6 @@ from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
 
 from .const import (
-    CONNECT_SERVICE_UUID,
     DAYE_SERVICE_UUIDS,
     DEFAULT_NAME,
     SUPPORTED_LOCAL_NAME_PREFIXES,
@@ -44,7 +43,7 @@ def is_supported_bluetooth_name(name: str) -> bool:
 
 def has_supported_service_uuid(service_uuids: list[str] | tuple[str, ...]) -> bool:
     """Return true if a discovery includes a supported Grouw mower service UUID."""
-    supported = {uuid.lower() for uuid in (*DAYE_SERVICE_UUIDS, CONNECT_SERVICE_UUID)}
+    supported = {uuid.lower() for uuid in DAYE_SERVICE_UUIDS}
     return any(uuid.lower() in supported for uuid in service_uuids)
 
 

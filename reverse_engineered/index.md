@@ -18,8 +18,6 @@ Read in this order when orienting yourself:
 5. [response_parsing.md](response_parsing.md) - decoded notification fields.
 6. [bluekey_commands.md](bluekey_commands.md) - APK-derived 48-value command
    format used only for debug probes so far.
-7. [connect_protocol.md](connect_protocol.md) - newer FFF0 JSON-over-BLE Grouw
-   generation.
 
 ## File Map
 
@@ -32,7 +30,6 @@ Read in this order when orienting yourself:
 | [response_parsing.md](response_parsing.md) | APK and DYM response parsing notes |
 | [ble_write_flow.md](ble_write_flow.md) | Daye app write/notify flow and state classes |
 | [bluekey_commands.md](bluekey_commands.md) | BlueKey command layout, sub-commands, debug probes |
-| [connect_protocol.md](connect_protocol.md) | Robotic Mower Connect framing, commands, and validation boundary |
 | [dart_blutter_analysis.md](dart_blutter_analysis.md) | Dart AOT/blutter symbol findings |
 | [native_crypto.md](native_crypto.md) | Telink native AES-ATT findings |
 | [java_kotlin_findings.md](java_kotlin_findings.md) | Java/Kotlin plugin, Gizwits, FlutterBluePlus findings |
@@ -41,8 +38,7 @@ Read in this order when orienting yourself:
 
 ## Current Protocol Picture
 
-The library supports two separate local Grouw protocol generations. Home
-Assistant currently uses the HCI-confirmed DYM protocol:
+`pyGrouw` owns the HCI-confirmed DYM protocol and the BLE request handling:
 
 ```text
 Outbound DYM write: 24 bytes, ASCII prefix "DYM"
@@ -50,9 +46,9 @@ Inbound status:     22 bytes, response command 0x80
 Inbound auth/PIN:   response command 0x8c
 ```
 
-`pyGrouw` owns DYM payload encoding/parsing and BLE request handling. The Home
-Assistant integration uses `pyGrouw` through Home Assistant's Bluetooth device
-resolution path instead of carrying a separate protocol implementation.
+The Home Assistant integration uses `pyGrouw` through Home Assistant's
+Bluetooth device resolution path instead of carrying a separate protocol
+implementation.
 
 The normal Home Assistant path uses DYM status/start/resume/pause/dock payloads
 without the DYM session/auth prelude. Hardware validation showed the prelude can
@@ -64,10 +60,6 @@ with prefix `[0x88, 0xb2, 0x9a]`. Those findings are useful for research and
 raw debug probes, but normal Home Assistant entities and controls do not use
 BlueKey writes until captures prove the exact on-wire behavior for this mower
 generation.
-
-Robotic Mower Connect uses FFF0/FFF1/FFF2 and A4-framed UTF-8 JSON. This path is
-implemented in `GrouwConnectBleMowerClient` from static APK evidence but is not
-yet hardware-validated.
 
 ## Confirmed Highlights
 
@@ -104,6 +96,16 @@ yet hardware-validated.
   distance writes, and PIN change writes.
 - Multi-area distance units on the wire.
 - Exact key derivation inputs passed from Dart/Java to native Telink crypto.
+
+The 2.0.1 APK bundles two distinct BLE stacks. The Dart `romow_bluetooth` layer
+uses FlutterBluePlus against the `49535343-...` service (DYM/BlueKey), while the
+Gizwits SDK's `BluetoothChannelEngine` uses the Telink `00010203-...` service
+with AES-ATT crypto for Gizwits mesh control. The Telink factory secrets live in
+`com.telink.crypto.Manufacture` (`factoryName`/`factoryPassword`/`factoryLtk`),
+referenced only from the Gizwits SDK, so they are Gizwits-mesh key-derivation
+inputs and not DYM control inputs. See
+[native_crypto.md](native_crypto.md) and
+[java_kotlin_findings.md](java_kotlin_findings.md).
 
 ## Validation Workflow
 

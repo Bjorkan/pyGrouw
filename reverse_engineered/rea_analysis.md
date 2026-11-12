@@ -8,26 +8,7 @@ remain local-only and must never be committed.
 
 ## Artifact Identity
 
-### Grouw application APKs
-
-REA statically inspected two Grouw-specific APKs used for this library pass:
-
-```text
-Robot Mower V0.3.2
-Package:  com.wifi.dayeapp
-SHA-256: d7317570b68b6b461dd56784303eae363cd083a00035e91110d28e7df23b15b7
-
-Robotic Mower Connect 1.4.5
-Package:  com.cj.lawnmower
-SHA-256: 8b36e348c2c50b301b661c3677dcbffde765cfb9ee75ee2a81a075490c20a916
-```
-
-Package-summary Evidence:
-
-- legacy APK: `ev_6ceb0dae6c49aa943608b646235b35fbc4f41a56e302475270b0a0b7bd8b514b`
-- Connect APK: `ev_0e12f42a95eb49ffed6a0a6b38b5f0e1951402b98f48c01334173865e79204ce`
-
-### Earlier Daye XAPK review
+### Daye XAPK review
 
 REA inventoried the supplied XAPK as a complete ZIP central-directory view:
 
@@ -145,67 +126,43 @@ library now:
 These are static-analysis and capture-informed implementation decisions. They
 do not claim that REA executed the app or observed mower runtime behavior.
 
-## Grouw APK Protocol Expansion
+## Telink / Gizwits Path Review (2026-11-12)
 
-The Grouw V0.3.2 APK exposed additional DYM command layouts now represented by
-the library: manual forward/reverse/left/right/stop, blade start/stop,
-force-stop, clock and language query/write, alert query, and runtime
-query/reset. DYM status parsing also exposes the APK-derived mower type and
-firmware-build fields. Existing real-hardware status captures establish the
-frame shape, but the newly exposed operations have not all been exercised on a
-physical mower.
+A fresh REA pass over the Daye 2.0.1 base APK (SHA-256
+`dff783703aae15ef901ed19398807c61d4d0a91388e1deb92a06d96e781feac2`, extracted
+from `Robot-Mower_2.0.1_apkcube.apks`) confirmed the package identity and mapped
+the app's second BLE stack:
 
-Robotic Mower Connect uses a separate local protocol:
+- Package summary (engine jadx-headless-mcp 0.7.1):
+  `ev_63c229cd040e105febc33095eeddb70ea48d4c26888da32b5b41e43769686b98`
+- Telink UUID enum (`com.telink.crypto.UuidInformation.<clinit>`):
+  `ev_54d056236cc6cfc5080e3a357aa2ae2dcbb6313859efb95e4652cf422e77f28a`
+- `Manufacture` class inventory:
+  `ev_1d28d1a54eed15e8c609fd6eb8fa3dbb91ad7637b8ae07ce23c172c6fef0ac78`
+- `DayeGizPlugin.onMethodCall` complete dispatch:
+  `ev_ab65870444e9f39377e68ad513b75423a68c4b24881a2194d4b4eda784b4291e`
+- `App.onCreate` (MultiDex only):
+  `ev_16abdadb031193ffe6da6d4e95705d2719989301f6576823f2408a3b284f3993`
 
-```text
-Service: 0000fff0-0000-1000-8000-00805f9b34fb
-Notify:  0000fff1-0000-1000-8000-00805f9b34fb
-Write:   0000fff2-0000-1000-8000-00805f9b34fb
+Findings:
 
-Frame:   A4 | payload length (little-endian uint16) | payload XOR | UTF-8 JSON
-Packets: at most 20 bytes each
-Payload: at most 3000 bytes in the recovered implementation
-```
+- `UuidInformation` hardcodes the Telink "SmartLight" reference UUID set
+  (`00010203-0405-0607-0809-0a0b0c0d1910` service, `...1911` notify,
+  `...1912` command, `...1913` OTA, `...1914` pair) plus the standard Device
+  Information UUIDs. These are the Gizwits mesh channel, not the DYM
+  `49535343-...` service.
+- `Manufacture` carries `factoryName`/`factoryPassword`/`factoryLtk` and is
+  referenced only from the Gizwits SDK (`SDKEventManager`,
+  `GizMeshLocalControlCenter`). Its `DEFAULT_MANUFACTURE` `<clinit>` body could
+  not be disassembled by JADX, so the literal factory secrets remain
+  unrecovered from Java.
+- `DayeGizPlugin` exposes 22 Gizwits cloud/onboarding methods and no local BLE
+  control; the DYM/BlueKey path is entirely Dart-side (FlutterBluePlus).
+- The Dart AOT string pool (via `strings` on the arm64 `libapp.so`) confirmed
+  the `49535343-...` UUIDs, `DYM` as a device-name suffix, and an expanded model
+  gating list (`DM104/DM304/DY002..DY162/GY002..GY162`) plus new page paths
+  (`device_list_wi_fi`, `information`, `add_robot_type`, etc.). Firmware update
+  is a guided manual keypad flow.
 
-Observed query/response pairs are `200→500` (all info), `201→501` (status),
-`203→503` (schedule), `205→505` (rain), `207→507` (multi-area), `208→508`
-(device information), `212→512` (battery), and `214→514` (feature flags). Work
-modes are stop `0`, work `1`, home `2`, trim `4`, and start-point `5`.
-
-Kotlin default-argument constructors establish the setter command table: work
-`101`, time `102`, schedule `103`, PIN verification `104`, rain `105`, language
-`106`, rename `107`, multi-area `108`, Wi-Fi `109`, PIN change `110`, update
-`111`, device reset `112`, ultrasonic `114`, LED `115`, GPS/electronic `116`,
-map reset `121`, and schedule pause `127`. The earlier visible `0` arguments at
-call sites are replaced by these defaults before serialization.
-
-The response parser recognizes generic acknowledgement `400`, rename `502`, PIN
-result `504`, battery `512`, features `514`, BLE map reset `523`, and work
-results `10100`, `10101`, and `10102`. Schedule fields are `auto`, `pause`, and
-`Mon` through `Sun`, each with `Trimming` and `slice` entries containing `start`
-and `end`. The app divides received raw multi-area meter fields by `1000` for
-display. The device-reset BLE flow writes command `112`, waits 10 seconds, and
-refreshes all information.
-
-Key Evidence:
-
-- Connect frame construction:
-  `ev_703813f4b998297763a2f9f9c5c5fe23fc1e6ac931c1ba94f65fc369eff53c52`
-- notification reassembly and checksum validation:
-  `ev_a200e9bcaf33699773a36342d2f4b0ba9d8019936b8bdb9b81c5f245b13072b5`
-- JSON response parser and command families:
-  `ev_39d4e29f9e2f9580a68bc6e445cd63ee6cd0baef7bc7a489d2d1b85ea22db919`
-- work-mode selection:
-  `ev_b8061b307938c56c1c897523755781bd7429c973aef617716bc4ff0e15f95dd0`
-- command defaults:
-  `ev_298ad02c2756b02c2b128503cd5cd5d1ecfbc6b95fb22b8fd4ac8b52c628ffdc`,
-  `ev_b49794d104eefbd9400f91f5862f44b2f20d2b72e61862de77df1afd5ac651ea`,
-  `ev_b66da44bbef77bbca16d1e0e188aa0fb1ec773df099cba55b4b3aae614eb4fba`,
-  `ev_381d90eab93e1266039525f4d2b32327a4eb247d37ac06a09e32c82958dcfa4d`
-- complete JSON parser branches:
-  `ev_51f122a1235c5cc8be1324c63d5e5364d376d073417ad71bb9e35c388c158b39`
-
-REA did not execute either APK and no Connect-generation mower was contacted.
-The implemented Connect behavior is therefore shipped-artifact-derived, not a
-runtime or hardware validation claim. Cloud APIs and firmware update remain
-outside this local BLE library.
+None of these establish runtime behavior; they map the Gizwits mesh path
+distinct from the local DYM/BlueKey path.

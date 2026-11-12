@@ -109,9 +109,11 @@ in AOT output should be confirmed before implementing PIN-change writes.
 mowInTheRain, boundaryCut, ultrasound, helixSet, hour, minute, led
 ```
 
-The settings page gates some options by model/version strings such as
-`DY002`, `DY052`, `DY012`, `DY112`, `GY002`, `GY052`, `GY012`, and `GY112`.
-Exact outgoing bytes still need hardware validation.
+The settings page gates some options by model/version strings. The complete
+recovered set is `DM104`, `DM304`, `DY002`, `DY012`, `DY022(x)`, `DY052`,
+`DY112`, `DY122`, `DY142`, `DY162`, `GY002`, `GY012`, `GY022`, `GY052`,
+`GY112`, `GY122`, `GY142`, `GY162`. Exact outgoing bytes still need hardware
+validation.
 
 ### Multi-Area Mowing
 
