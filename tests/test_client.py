@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from bleak import BleakError
 import pytest
 
 from pygrouw.client import (
@@ -15,12 +16,21 @@ from pygrouw.client import (
     GrouwBleTimeout,
     _coerce_bool,
     _coerce_expected_cmd,
+    _decode_device_information_value,
     _drain_queue,
 )
-from pygrouw.const import DEFAULT_REQUESTED_MTU
+from pygrouw.const import (
+    DEFAULT_REQUESTED_MTU,
+    FIRMWARE_REVISION_CHARACTERISTIC_UUID,
+    MODEL_NUMBER_CHARACTERISTIC_UUID,
+    SERIAL_NUMBER_CHARACTERISTIC_UUID,
+    SYSTEM_ID_CHARACTERISTIC_UUID,
+)
 from pygrouw.protocol import (
     DAYE_RESPONSE_PIN_CHANGE,
     DAYE_RESPONSE_PIN_OR_AUTH,
+    DAYE_RESPONSE_WORK_TIME_DURATION,
+    DAYE_RESPONSE_WORK_TIME_START,
     encode_bluekey_command,
     encode_daye_change_pin,
     encode_daye_command,
@@ -415,6 +425,122 @@ def test_request_mtu_with_log_ignores_unsupported_client() -> None:
     asyncio.run(run())
 
 
+def test_request_mtu_with_log_uses_bluez_backend_fallback() -> None:
+    """Linux acquires an MTU when Bleak has no public request_mtu method."""
+
+    class _Backend:
+        def __init__(self) -> None:
+            self.acquired = False
+
+        async def _acquire_mtu(self) -> None:
+            self.acquired = True
+
+    class _Client:
+        mtu_size = 247
+
+        def __init__(self) -> None:
+            self._backend = _Backend()
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        ble_client = _Client()
+
+        await client._request_mtu_with_log(ble_client)  # type: ignore[arg-type]
+
+        assert ble_client._backend.acquired is True
+
+    asyncio.run(run())
+
+
+def test_decode_device_information_values() -> None:
+    """Text fields and the binary System ID use their standard representations."""
+    assert _decode_device_information_value("model", b"DY123\x00") == "DY123"
+    assert _decode_device_information_value("system_id", b"\x01\xab") == "01ab"
+
+
+def test_get_device_information_reads_supported_gatt_fields() -> None:
+    """Device identity is read in one app-shaped connection without logging values."""
+
+    class _Client:
+        mtu_size = 247
+
+        def __init__(self) -> None:
+            self.disconnected = False
+            self.values = {
+                MODEL_NUMBER_CHARACTERISTIC_UUID: b"DY123\x00",
+                SERIAL_NUMBER_CHARACTERISTIC_UUID: b"private-serial",
+                FIRMWARE_REVISION_CHARACTERISTIC_UUID: b"1.2.3",
+                SYSTEM_ID_CHARACTERISTIC_UUID: b"\x01\x02",
+            }
+
+        async def request_mtu(self, _mtu: int) -> int:
+            return self.mtu_size
+
+        async def read_gatt_char(self, characteristic: str) -> bytes:
+            if characteristic not in self.values:
+                raise BleakError("not present")
+            return self.values[characteristic]
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        ble_client = _Client()
+
+        async def connect(_timeout: float) -> _Client:
+            return ble_client
+
+        client._establish_connection = connect  # type: ignore[method-assign]
+
+        information = await client.async_get_device_information()
+
+        assert information == {
+            "model": "DY123",
+            "serial": "private-serial",
+            "firmware_version": "1.2.3",
+            "system_id": "0102",
+        }
+        assert ble_client.disconnected is True
+
+    asyncio.run(run())
+
+
+def test_get_device_information_fails_when_service_has_no_readable_fields() -> None:
+    """A missing Device Information service is reported and still disconnected."""
+
+    class _Client:
+        mtu_size = 23
+
+        def __init__(self) -> None:
+            self.disconnected = False
+
+        async def request_mtu(self, _mtu: int) -> int:
+            return self.mtu_size
+
+        async def read_gatt_char(self, _characteristic: str) -> bytes:
+            raise BleakError("not present")
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        ble_client = _Client()
+
+        async def connect(_timeout: float) -> _Client:
+            return ble_client
+
+        client._establish_connection = connect  # type: ignore[method-assign]
+
+        with pytest.raises(GrouwBleGattError, match="Device Information Service"):
+            await client.async_get_device_information()
+
+        assert ble_client.disconnected is True
+
+    asyncio.run(run())
+
+
 def test_raw_payload_accepts_hex_expected_command_and_string_auth_flag() -> None:
     """Raw service options support hex command strings and string booleans."""
 
@@ -609,5 +735,79 @@ def test_multi_step_path_preserves_connection_error_type(
                 [(b"DYM", None, 0, "write", 0)],
                 authenticate=False,
             )
+
+    asyncio.run(run())
+
+
+def test_required_responses_ignore_duplicate_command() -> None:
+    """A work-time query requires one 0x84 and one 0x85 response."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        queue.put_nowait({"cmd": DAYE_RESPONSE_WORK_TIME_START, "sequence": 1})
+        queue.put_nowait({"cmd": DAYE_RESPONSE_WORK_TIME_START, "sequence": 2})
+        queue.put_nowait({"cmd": DAYE_RESPONSE_WORK_TIME_DURATION, "sequence": 3})
+
+        responses = await client._wait_for_required_responses(  # type: ignore[arg-type]
+            queue,
+            {DAYE_RESPONSE_WORK_TIME_START, DAYE_RESPONSE_WORK_TIME_DURATION},
+            0.1,
+            "work_time",
+        )
+
+        assert [response["cmd"] for response in responses] == [
+            DAYE_RESPONSE_WORK_TIME_START,
+            DAYE_RESPONSE_WORK_TIME_DURATION,
+        ]
+        assert responses[0]["sequence"] == 2
+
+    asyncio.run(run())
+
+
+def test_set_mower_settings_preserves_unknown_field() -> None:
+    """An omitted APK-derived unknown setting is read before writing."""
+
+    async def run() -> None:
+        client = GrouwBleMowerClient("AA:BB:CC:DD:EE:FF", "Test mower")
+        seen: dict[str, object] = {}
+
+        async def fake_get() -> dict[str, object]:
+            return {"mower_settings": {"unknown_setting": True}}
+
+        async def fake_multi(
+            steps: list[tuple[bytes, int | None | set[int], float, str, int]],
+            **kwargs: object,
+        ) -> list[object]:
+            seen["steps"] = steps
+            return [
+                None,
+                {
+                    "mower_settings": {
+                        "mow_in_rain": False,
+                        "boundary_cut": False,
+                        "unknown_setting": True,
+                        "helix": False,
+                        "rain_delay_hour": 0,
+                        "rain_delay_minute": 0,
+                    }
+                },
+            ]
+
+        client.async_get_mower_settings = fake_get  # type: ignore[method-assign]
+        client._async_request_daye_multi_locked = fake_multi  # type: ignore[method-assign]
+
+        await client.async_set_mower_settings(
+            mow_in_rain=False,
+            boundary_cut=False,
+            helix=False,
+            rain_delay_hours=0,
+            rain_delay_minutes=0,
+        )
+
+        steps = seen["steps"]
+        assert isinstance(steps, list)
+        assert steps[0][0][6] == 1
+        assert steps[1][2] == 0.3
 
     asyncio.run(run())

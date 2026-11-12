@@ -1,6 +1,6 @@
 # GATT Table
 
-Last updated: 2026-06-26.
+Last updated: 2026-10-30.
 
 Confirmed from an iPhone BLE scan near the mower and HCI discovery from the
 Daye app.
@@ -61,3 +61,6 @@ Command. Notifications arrive on the same handle.
   `49535343-1E4D-4BD9-BA61-23C647249616`.
 - Do not expose scanned serial-number/device-info values in diagnostics unless
   redacted.
+- pyGrouw may read the standard `180A` fields in one connection through
+  `async_get_device_information()`. Missing optional characteristics are
+  skipped; no returned values are written to logs.

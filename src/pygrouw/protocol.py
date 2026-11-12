@@ -14,6 +14,7 @@ DYM_PREFIX = b"DYM"
 DYM_TRAILER = bytes.fromhex("160601ff0a")
 DYM_NOTIFICATION_TRAILER = bytes.fromhex("160601")
 DYM_STATUS_NOTIFICATION_LENGTH = 22
+DYM_NOTIFICATION_LENGTH = DYM_STATUS_NOTIFICATION_LENGTH
 PIN_LENGTH = 4
 BLUEKEY_PREFIX = bytes((0x88, 0xB2, 0x9A))
 BLUEKEY_LENGTH = 48
@@ -52,6 +53,7 @@ DAYE_RESPONSE_WORK_TIME_DURATION = 0x85
 DAYE_WORK_TIME_QUERY_PAYLOAD = bytes.fromhex("44594d14000000000000000000000000000000160601ff0a")
 DAYE_RESPONSE_STATUS = 0x80
 
+
 BLUEKEY_QUERY_INFO = 0x00
 BLUEKEY_SET_TIME = 0x04
 BLUEKEY_CHANGE_PIN = 0x0C
@@ -61,6 +63,10 @@ BLUEKEY_WORK_TIME = 0x28
 BLUEKEY_MOWER_SETTING_QUERY = 0x32
 BLUEKEY_MULTI_AREA_QUERY = 0x3A
 BLUEKEY_ERROR_MEMORY = 0x3C
+# 0x06 is shared with the "back to station" control in MowerStatusLogic::
+# manageDevice. It must be resolved from bluekey_context, not by sub-command.
+BLUEKEY_LANGUAGE_WRITE = 0x06
+BLUEKEY_LANGUAGE_QUERY = 0x26
 
 BLUEKEY_COMMAND_SPECS: dict[str, tuple[int, tuple[int, ...]]] = {
     "query_info": (BLUEKEY_QUERY_INFO, (0x22,) * 8),
@@ -72,6 +78,8 @@ BLUEKEY_COMMAND_SPECS: dict[str, tuple[int, tuple[int, ...]]] = {
     "multi_area": (BLUEKEY_MULTI_AREA_QUERY, ()),
     "multi_area_query": (BLUEKEY_MULTI_AREA_QUERY, ()),
     "error_memory": (BLUEKEY_ERROR_MEMORY, ()),
+    "language_query": (BLUEKEY_LANGUAGE_QUERY, ()),
+    "query_language": (BLUEKEY_LANGUAGE_QUERY, ()),
     "start": (0x00, ()),
     "stop": (0x02, ()),
     "go_to_work": (0x04, ()),
@@ -89,6 +97,32 @@ BLUEKEY_SUB_COMMAND_NAMES: dict[int, str] = {
     BLUEKEY_MULTI_AREA_QUERY: "multi_area",
     BLUEKEY_ERROR_MEMORY: "error_memory",
 }
+
+# Language selection order recovered from LanguageSettingState (19 entries).
+# The write code is `index * 2`; the query response is matched through the same
+# code table after Helper.tenToHex in LanguageSettingLogic::getLanguage.
+BLUEKEY_LANGUAGES = (
+    "English",
+    "Deutsch",
+    "dansk",
+    "čeština",
+    "slovenský",
+    "Polski",
+    "Magyarország",
+    "Русский",
+    "Français",
+    "български",
+    "Suomi",
+    "Nederlands",
+    "lietuvių",
+    "România",
+    "Norge",
+    "Português",
+    "Sverige",
+    "español",
+    "Italiano",
+)
+BLUEKEY_LANGUAGE_CODES = tuple(index * 2 for index in range(len(BLUEKEY_LANGUAGES)))
 
 
 def _looks_like_pin_digits(payload: bytes) -> bool:
@@ -172,6 +206,25 @@ def encode_bluekey_command(command: str) -> bytes:
     return encode_bluekey_payload(sub_cmd, data)
 
 
+def _coerce_bluekey_language_code(language: str | int) -> int:
+    """Resolve a BlueKey language name or code to its APK code byte."""
+    if isinstance(language, int):
+        if language in BLUEKEY_LANGUAGE_CODES:
+            return language
+        raise ValueError(f"Unknown BlueKey language code: {language}")
+    name = str(language).strip().lower()
+    for index, candidate in enumerate(BLUEKEY_LANGUAGES):
+        if candidate.lower() == name:
+            return index * 2
+    raise ValueError(f"Unknown BlueKey language: {language}")
+
+
+def encode_bluekey_language(language: str | int) -> bytes:
+    """Build a 48-byte BlueKey language-select payload (sub-command 0x06)."""
+    code = _coerce_bluekey_language_code(language)
+    return encode_bluekey_payload(BLUEKEY_LANGUAGE_WRITE, (code,))
+
+
 def redact_daye_message(message: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of a parsed message with user-sensitive fields redacted."""
     redacted = dict(message)
@@ -185,6 +238,35 @@ def redact_daye_message(message: dict[str, Any]) -> dict[str, Any]:
         # Bytes 4..11 contain old and new PIN digits.
         redacted["raw_hex"] = f"{raw_hex[:8]}****************{raw_hex[24:]}"
     return redacted
+
+
+def redact_daye_payload(payload: bytes) -> str:
+    """Return a log-safe representation of an outbound protocol payload."""
+    raw_hex = payload.hex()
+    if payload.startswith(DYM_PREFIX) and len(payload) >= 12 and payload[3] == DAYE_CHANGE_PIN:
+        return f"{raw_hex[:8]}****************{raw_hex[24:]}"
+    if (
+        payload.startswith(BLUEKEY_PREFIX)
+        and len(payload) >= 4
+        and payload[3] == BLUEKEY_CHANGE_PIN
+    ):
+        return f"{raw_hex[:8]}<redacted:{len(payload) - 4} bytes>"
+    return raw_hex
+
+
+def _valid_dym_notification(payload: bytes, command: int) -> bool:
+    """Return whether a known DYM notification has complete framing."""
+    return (
+        len(payload) == DYM_NOTIFICATION_LENGTH
+        and payload.startswith(DYM_PREFIX)
+        and payload[3] == command
+        and payload.endswith(DYM_NOTIFICATION_TRAILER)
+    )
+
+
+def _valid_bool_bytes(payload: bytes, indexes: Iterable[int]) -> bool:
+    """Return whether all selected protocol fields are encoded as 0 or 1."""
+    return all(payload[index] in (0, 1) for index in indexes)
 
 
 def encode_daye_session_start(now: datetime | None = None) -> bytes:
@@ -414,6 +496,13 @@ def _bluekey_decimal_chunks(chunks: bytes) -> str | None:
     return "".join(significant) if significant else "0"
 
 
+def _bluekey_language_name(code: int) -> str | None:
+    """Map a BlueKey language code to its APK display name."""
+    if code in BLUEKEY_LANGUAGE_CODES:
+        return BLUEKEY_LANGUAGES[code // 2]
+    return None
+
+
 def _parse_bluekey_payload(
     payload: bytes,
     bluekey_context: str | None = None,
@@ -495,6 +584,15 @@ def _parse_bluekey_payload(
             for index, day in enumerate(days)
         }
 
+    if command_name in {"language_query", "query_language"} and len(payload) >= 5:
+        # LanguageSettingLogic::getLanguage reads byte5, applies Helper.tenToHex,
+        # then matches the result against the language code table.
+        code = daye_ten_to_hex(str(payload[4]))
+        message["bluekey_language_code"] = code
+        language = _bluekey_language_name(code)
+        if language is not None:
+            message["bluekey_language"] = language
+
     return message
 
 
@@ -502,7 +600,7 @@ def parse_daye_payload(
     payload: bytes,
     bluekey_context: str | None = None,
 ) -> dict[str, Any] | None:
-    """Parse a Daye DYM notification payload."""
+    """Parse a complete Daye notification payload."""
     if not payload:
         return None
     bluekey_message = _parse_bluekey_payload(payload, bluekey_context)
@@ -512,31 +610,56 @@ def parse_daye_payload(
         _LOGGER.debug("Ignoring non-Daye BLE payload: %s", payload.hex())
         return None
 
+    if len(payload) <= 3:
+        return None
+
+    command = payload[3]
+    known_commands = {
+        DAYE_RESPONSE_STATUS,
+        DAYE_RESPONSE_PIN_OR_AUTH,
+        DAYE_RESPONSE_PIN_CHANGE,
+        DAYE_RESPONSE_MULTI_AREA,
+        DAYE_RESPONSE_MOWER_SETTINGS,
+        DAYE_RESPONSE_WORK_TIME_START,
+        DAYE_RESPONSE_WORK_TIME_DURATION,
+    }
+    if command in known_commands and not _valid_dym_notification(payload, command):
+        _LOGGER.debug(
+            "Ignoring malformed DYM response cmd=0x%02x length=%s payload=%s",
+            command,
+            len(payload),
+            payload.hex(),
+        )
+        return None
+
     message: dict[str, Any] = {
         "raw_hex": payload.hex(),
-        "cmd": payload[3] if len(payload) > 3 else None,
+        "cmd": command,
     }
     if payload.endswith(DYM_NOTIFICATION_TRAILER):
         message["trailer"] = payload[-3:].hex()
 
-    # Status notifications captured from the official app are 22 bytes.
-    if (
-        len(payload) == DYM_STATUS_NOTIFICATION_LENGTH
-        and payload[3] == DAYE_RESPONSE_STATUS
-        and payload.endswith(DYM_NOTIFICATION_TRAILER)
-    ):
-        message["battery_level"] = payload[4]
+    if command == DAYE_RESPONSE_STATUS:
+        battery_level = payload[4]
+        if battery_level <= 100:
+            message["battery_level"] = battery_level
         message["mode"] = payload[12]
         if payload[7] in (0x00, 0x01):
             message["station"] = payload[7] == 0x01
-    elif len(payload) >= 8 and payload[3] == DAYE_RESPONSE_PIN_OR_AUTH:
+    elif command == DAYE_RESPONSE_PIN_OR_AUTH:
         pin_bytes = payload[4:8]
         if _looks_like_pin_digits(pin_bytes):
             message["mower_pin"] = "".join(str(byte) for byte in pin_bytes)
-    elif len(payload) >= 8 and payload[3] == DAYE_RESPONSE_PIN_CHANGE:
+    elif command == DAYE_RESPONSE_PIN_CHANGE:
         message["pin_change_ack"] = True
         message["pin_change_success"] = payload[4:19] == b"\x00" * 15
-    elif len(payload) >= 12 and payload[3] == DAYE_RESPONSE_MULTI_AREA:
+    elif command == DAYE_RESPONSE_MULTI_AREA:
+        if (
+            payload[4] > 100
+            or payload[8] > 100
+            or any(value > 9 for value in (*payload[5:8], *payload[9:12]))
+        ):
+            return None
         distance2 = payload[5] * 100 + payload[6] * 10 + payload[7]
         distance3 = payload[9] * 100 + payload[10] * 10 + payload[11]
         message["multi_area"] = {
@@ -545,7 +668,11 @@ def parse_daye_payload(
             "area3_percentage": payload[8],
             "area3_distance": distance3,
         }
-    elif len(payload) >= 12 and payload[3] == DAYE_RESPONSE_MOWER_SETTINGS:
+    elif command == DAYE_RESPONSE_MOWER_SETTINGS:
+        if not _valid_bool_bytes(payload, (4, 5, 6, 7)):
+            return None
+        if payload[8] > 23 or payload[9] > 59:
+            return None
         message["mower_settings"] = {
             "mow_in_rain": payload[4] == 1,
             "boundary_cut": payload[5] == 1,
@@ -553,20 +680,41 @@ def parse_daye_payload(
             "helix": payload[7] == 1,
             "rain_delay_hour": payload[8],
             "rain_delay_minute": payload[9],
-            "led": payload[11] == 1,
         }
-    elif len(payload) >= 19 and payload[3] == DAYE_RESPONSE_WORK_TIME_START:
-        days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+    elif command == DAYE_RESPONSE_WORK_TIME_START:
+        hours = payload[4:11]
+        minutes = payload[11:18]
+        if any(hour > 23 for hour in hours) or any(minute > 59 for minute in minutes):
+            return None
+        days = (
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        )
         message["work_time_starts"] = [
-            {"day": day, "hour": payload[4 + i], "minute": payload[11 + i]}
-            for i, day in enumerate(days)
+            {"day": day, "hour": hours[i], "minute": minutes[i]} for i, day in enumerate(days)
         ]
         message["work_time_reserved"] = payload[18]
-    elif len(payload) >= 19 and payload[3] == DAYE_RESPONSE_WORK_TIME_DURATION:
-        days = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+    elif command == DAYE_RESPONSE_WORK_TIME_DURATION:
+        hours = payload[4:11]
+        tenths = payload[11:18]
+        if any(hour > 23 for hour in hours) or any(tenth > 9 for tenth in tenths):
+            return None
+        days = (
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        )
         message["work_time_durations"] = [
-            {"day": day, "hours": payload[4 + i], "tenths": payload[11 + i]}
-            for i, day in enumerate(days)
+            {"day": day, "hours": hours[i], "tenths": tenths[i]} for i, day in enumerate(days)
         ]
         message["work_time_reserved"] = payload[18]
     return message
@@ -596,6 +744,7 @@ class MowerState:
     station: bool | None = None
     last_response_cmd: int | None = None
     raw: dict[str, Any] | None = None
+    last_communication: datetime | None = None
     last_seen: datetime | None = None
 
     @property
@@ -611,11 +760,20 @@ def state_from_message(
     """Update a state object from a parsed Daye BLE message."""
     base = previous or MowerState(address=address)
     cmd = _optional_int(message, "cmd")
+    now = datetime.now(UTC)
     updates: dict[str, Any] = {
         "raw": redact_daye_message(message),
         "last_response_cmd": cmd,
-        "last_seen": datetime.now(UTC),
+        "last_communication": now,
     }
+    is_status = cmd == DAYE_RESPONSE_STATUS
+    if is_status and any(key in message for key in ("battery_level", "mode", "station")):
+        updates["last_seen"] = now
+
+    for src, dst in (("model", "model"), ("sn", "serial"), ("version", "firmware_version")):
+        value = message.get(src)
+        if isinstance(value, (str, int)):
+            updates[dst] = str(value)
 
     for src, dst in (
         ("battery_level", "battery_level"),

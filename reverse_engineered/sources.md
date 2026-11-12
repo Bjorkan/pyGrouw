@@ -1,6 +1,6 @@
 # Sources
 
-Last updated: 2026-06-26.
+Last updated: 2026-10-30.
 
 Only the Daye APK and redacted hardware captures are authoritative for current
 wire-protocol facts. Local manuals can corroborate product behavior and model
@@ -23,6 +23,10 @@ https://play.google.com/store/apps/details?id=com.dayepower.dayeappleaf
 ```
 
 Local APK/decompiler artifacts are under `APK/` and are not committed.
+
+The XAPK and split APK identities were independently inventoried with REA on
+2026-10-30. See [rea_analysis.md](rea_analysis.md) for hashes, Evidence IDs,
+coverage, and limitations.
 
 Relevant local findings:
 

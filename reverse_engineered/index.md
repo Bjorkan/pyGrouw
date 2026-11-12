@@ -1,6 +1,6 @@
 # Reverse Engineered Protocol Notes
 
-Last updated: 2026-06-27.
+Last updated: 2026-10-31.
 
 This directory is the durable protocol memory for `pyGrouw` and the Home
 Assistant integration that consumes it. Keep raw APKs, decompiler output,
@@ -34,10 +34,11 @@ Read in this order when orienting yourself:
 | [native_crypto.md](native_crypto.md) | Telink native AES-ATT findings |
 | [java_kotlin_findings.md](java_kotlin_findings.md) | Java/Kotlin plugin, Gizwits, FlutterBluePlus findings |
 | [manual_findings.md](manual_findings.md) | Local Grouw manual findings and model boundaries |
+| [rea_analysis.md](rea_analysis.md) | REA artifact identity, coverage, and evidence ledger |
 
 ## Current Protocol Picture
 
-Home Assistant currently uses the HCI-confirmed DYM protocol:
+`pyGrouw` owns the HCI-confirmed DYM protocol and the BLE request handling:
 
 ```text
 Outbound DYM write: 24 bytes, ASCII prefix "DYM"
@@ -45,9 +46,9 @@ Inbound status:     22 bytes, response command 0x80
 Inbound auth/PIN:   response command 0x8c
 ```
 
-`pyGrouw` owns DYM payload encoding/parsing and BLE request handling. The Home
-Assistant integration uses `pyGrouw` through Home Assistant's Bluetooth device
-resolution path instead of carrying a separate protocol implementation.
+The Home Assistant integration uses `pyGrouw` through Home Assistant's
+Bluetooth device resolution path instead of carrying a separate protocol
+implementation.
 
 The normal Home Assistant path uses DYM status/start/resume/pause/dock payloads
 without the DYM session/auth prelude. Hardware validation showed the prelude can
@@ -95,6 +96,16 @@ generation.
   distance writes, and PIN change writes.
 - Multi-area distance units on the wire.
 - Exact key derivation inputs passed from Dart/Java to native Telink crypto.
+
+The 2.0.1 APK bundles two distinct BLE stacks. The Dart `romow_bluetooth` layer
+uses FlutterBluePlus against the `49535343-...` service (DYM/BlueKey), while the
+Gizwits SDK's `BluetoothChannelEngine` uses the Telink `00010203-...` service
+with AES-ATT crypto for Gizwits mesh control. The Telink factory secrets live in
+`com.telink.crypto.Manufacture` (`factoryName`/`factoryPassword`/`factoryLtk`),
+referenced only from the Gizwits SDK, so they are Gizwits-mesh key-derivation
+inputs and not DYM control inputs. See
+[native_crypto.md](native_crypto.md) and
+[java_kotlin_findings.md](java_kotlin_findings.md).
 
 ## Validation Workflow
 

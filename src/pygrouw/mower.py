@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Any
 
 from .client import GrouwBleMowerClient
@@ -53,6 +55,18 @@ class GrouwMower:
         """Poll the mower and update local state."""
         message = await self.client.async_get_all_info()
         self.state = state_from_message(self.client.address, message, self.state)
+        return self.state
+
+    async def async_update_device_information(self) -> MowerState:
+        """Read the mower's standard GATT identity and revision fields."""
+        information = await self.client.async_get_device_information()
+        self.state = replace(
+            self.state,
+            model=information.get("model", self.state.model),
+            serial=information.get("serial", self.state.serial),
+            firmware_version=information.get("firmware_version", self.state.firmware_version),
+            last_communication=datetime.now(UTC),
+        )
         return self.state
 
     async def async_command(self, command: str) -> MowerState:

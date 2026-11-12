@@ -1,6 +1,6 @@
 # BLE Write And Notification Flow
 
-Last updated: 2026-06-26.
+Last updated: 2026-10-30.
 
 Findings from `MainLogic::writeAndNotify` (`0x461eb4`),
 `MainLogic::blueWriteAndNotification` (`0x461fa4`), and related Daye app
@@ -15,6 +15,13 @@ toast and calling `discoverServices`.
 The bundled FlutterBluePlus implementation requests MTU 512 with a 15-second
 timeout.
 
+On Android, the bundled plugin forwards that request to `BluetoothGatt` and
+uses `MTU - 3` (capped at 512) as the normal characteristic-write payload
+limit. On Linux, Bleak has no cross-platform public `request_mtu` API, so
+pyGrouw best-effort invokes BlueZ's backend MTU acquisition when available.
+Failure remains non-fatal, matching the existing best-effort behavior on
+backends that cannot request an MTU.
+
 ## Write/Notify Sequence
 
 1. `Helper::writeAndNotify` resolves `MainLogic` through GetIt and forwards
@@ -26,6 +33,11 @@ timeout.
 5. It writes the command bytes with `BluetoothCharacteristic::write`.
 6. On notification, it calls `Helper::parseBlueResult`.
 7. The parsed one-based byte map is passed to the callback closure.
+
+The Android plugin maps Flutter write-with-response to Android
+`WRITE_TYPE_DEFAULT`. This agrees with the captured ATT Write Request on the
+control characteristic. Notification setup writes the CCCD after enabling the
+characteristic notification locally.
 
 `Helper::writeAndNotify` signature:
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pygrouw.protocol import (
+    BLUEKEY_LANGUAGE_QUERY,
     BLUEKEY_MOWER_SETTING_QUERY,
     BLUEKEY_MULTI_AREA_QUERY,
     BLUEKEY_QUERY_PIN,
@@ -14,6 +15,7 @@ from pygrouw.protocol import (
     MowerState,
     daye_ten_to_hex,
     encode_bluekey_command,
+    encode_bluekey_language,
     encode_bluekey_payload,
     encode_daye_command,
     encode_daye_mower_settings,
@@ -24,6 +26,7 @@ from pygrouw.protocol import (
     encode_raw_payload,
     parse_daye_payload,
     redact_daye_message,
+    redact_daye_payload,
     state_from_message,
 )
 
@@ -79,6 +82,86 @@ def test_encode_bluekey_payload_accepts_generic_sub_command() -> None:
     assert payload[19:24] == bytes.fromhex("2c0c02fe14")
 
 
+def test_bluekey_language_table_matches_apk_order() -> None:
+    """The recovered language order has 19 entries with codes 0,2,...,36."""
+    from pygrouw.protocol import BLUEKEY_LANGUAGE_CODES, BLUEKEY_LANGUAGES
+
+    assert len(BLUEKEY_LANGUAGES) == 19
+    assert list(BLUEKEY_LANGUAGE_CODES) == list(range(0, 38, 2))
+    assert BLUEKEY_LANGUAGES[0] == "English"
+    assert BLUEKEY_LANGUAGES[18] == "Italiano"
+
+
+def test_encode_bluekey_language_matches_apk_layout() -> None:
+    """Language selection is sub-command 0x06 with the code in byte 4."""
+    payload = encode_bluekey_language("Italiano")
+
+    assert len(payload) == 48
+    assert payload[:5] == bytes.fromhex("88b29a0624")
+    assert payload[5:19] == b"\x00" * 14
+    assert payload[19:24] == bytes.fromhex("2c0c02fe14")
+    assert payload[24:] == b"\x00" * 24
+
+
+def test_encode_bluekey_language_accepts_names_and_codes() -> None:
+    """Language codes are index * 2, accepted by name or by code."""
+    assert encode_bluekey_language("English")[4] == 0
+    assert encode_bluekey_language("english")[4] == 0
+    assert encode_bluekey_language("Deutsch")[4] == 2
+    assert encode_bluekey_language("Italiano")[4] == 36
+    assert encode_bluekey_language(36)[4] == 36
+
+
+def test_encode_bluekey_language_rejects_unknown() -> None:
+    """Unknown language names and out-of-table codes are rejected."""
+    import pytest
+
+    with pytest.raises(ValueError, match="Unknown BlueKey language"):
+        encode_bluekey_language("Klingon")
+    with pytest.raises(ValueError, match="Unknown BlueKey language code"):
+        encode_bluekey_language(7)
+
+
+def test_encode_bluekey_language_query_matches_apk_layout() -> None:
+    """Language query is sub-command 0x26 with zero data."""
+    payload = encode_bluekey_command("language_query")
+
+    assert len(payload) == 48
+    assert payload[:4] == bytes.fromhex("88b29a26")
+    assert payload[4:19] == b"\x00" * 15
+    assert payload[19:24] == bytes.fromhex("2c0c02fe14")
+
+
+def test_parse_bluekey_language_query_maps_ten_to_hex() -> None:
+    """Language query responses apply Helper.tenToHex to byte5."""
+    message = parse_daye_payload(
+        encode_bluekey_payload(BLUEKEY_LANGUAGE_QUERY, [14]),
+        bluekey_context="language_query",
+    )
+
+    assert message is not None
+    assert message["bluekey_language_code"] == 14
+    assert message["bluekey_language"] == "Русский"
+
+    message = parse_daye_payload(
+        encode_bluekey_payload(BLUEKEY_LANGUAGE_QUERY, [20]),
+        bluekey_context="language_query",
+    )
+
+    assert message is not None
+    assert message["bluekey_language_code"] == 36
+    assert message["bluekey_language"] == "Italiano"
+
+
+def test_bluekey_language_write_requires_context() -> None:
+    """0x06 is ambiguous (language vs back-to-station) and is not auto-named."""
+    message = parse_daye_payload(encode_bluekey_payload(0x06, [36]))
+
+    assert message is not None
+    assert "bluekey_language" not in message
+    assert message.get("bluekey_command") is None
+
+
 def test_parse_daye_status_notification_maps_observed_fields() -> None:
     """Parse battery and mode bytes observed in the HCI snoop log."""
     message = parse_daye_payload(bytes.fromhex("44594d8064331b010004000100444100000000160601"))
@@ -98,23 +181,33 @@ def test_parse_daye_payload_ignores_non_dym_payload() -> None:
     assert parse_daye_payload(bytes.fromhex("01020304")) is None
 
 
-def test_parse_daye_payload_does_not_decode_short_status_payload() -> None:
-    """Only the captured 22-byte DYM status shape is decoded as state."""
-    message = parse_daye_payload(bytes.fromhex("44594d806400160601"))
+def test_parse_daye_payload_rejects_short_status_payload() -> None:
+    """Known DYM responses require the complete captured 22-byte frame."""
+    assert parse_daye_payload(bytes.fromhex("44594d806400160601")) is None
 
-    assert message == {
-        "raw_hex": "44594d806400160601",
-        "cmd": 0x80,
-        "trailer": "160601",
-    }
+
+def test_parse_daye_payload_rejects_known_response_with_bad_trailer() -> None:
+    """Known response commands cannot bypass frame validation."""
+    payload = bytes.fromhex("44594d8064331b010004000100444100000000160602")
+
+    assert parse_daye_payload(payload) is None
+
+
+def test_parse_daye_payload_rejects_out_of_range_status_battery() -> None:
+    """A percentage candidate outside 0..100 is not exposed as battery state."""
+    message = parse_daye_payload(bytes.fromhex("44594d8065331b010004000100444100000000160601"))
+
+    assert message is not None
+    assert "battery_level" not in message
+    assert message["mode"] == 0
 
 
 def test_parse_daye_auth_response_extracts_numeric_pin_digits() -> None:
     """The auth/PIN response exposes the mower PIN as four digit bytes."""
-    message = parse_daye_payload(bytes.fromhex("44594d8c0102030400000000000000000000160601"))
+    message = parse_daye_payload(bytes.fromhex("44594d8c010203040000000000000000000000160601"))
 
     assert message == {
-        "raw_hex": "44594d8c0102030400000000000000000000160601",
+        "raw_hex": "44594d8c010203040000000000000000000000160601",
         "cmd": 0x8C,
         "trailer": "160601",
         "mower_pin": "1234",
@@ -195,7 +288,7 @@ def test_parse_daye_multi_area_response() -> None:
 
 def test_parse_daye_multi_area_response_non_zero_distance() -> None:
     """Non-zero distances are correctly decoded from decimal-chunk bytes."""
-    message = parse_daye_payload(bytes.fromhex("44594d8d0501000110000704160601"))
+    message = parse_daye_payload(bytes.fromhex("44594d8d050100011000070400000000000000160601"))
 
     assert message is not None
     assert message["multi_area"] == {
@@ -273,7 +366,6 @@ def test_parse_daye_mower_settings_response() -> None:
         "helix": False,
         "rain_delay_hour": 0,
         "rain_delay_minute": 0,
-        "led": False,
     }
 
 
@@ -344,6 +436,15 @@ def test_redact_daye_message_hides_pin_and_auth_pin_bytes() -> None:
         "cmd": 0x8C,
         "mower_pin": "****",
     }
+
+
+def test_redact_daye_payload_hides_outbound_pin_change_digits() -> None:
+    """PIN digits must not leak from successful GATT write logging."""
+    from pygrouw.protocol import encode_daye_change_pin
+
+    payload = encode_daye_change_pin("1234", "4321")
+
+    assert redact_daye_payload(payload) == ("44594d06****************00000000000000160601ff0a")
 
 
 def test_parse_bluekey_query_pin_extracts_and_redacts_pin() -> None:
@@ -426,3 +527,16 @@ def test_state_from_message_maps_confirmed_dym_fields() -> None:
     assert state.station is False
     assert state.last_response_cmd == 0x80
     assert state.last_seen is not None
+    assert state.last_communication == state.last_seen
+
+
+def test_state_from_non_status_message_does_not_mark_state_available() -> None:
+    """Authentication traffic is communication, not a fresh status observation."""
+    state = state_from_message(
+        "AA:BB:CC:DD:EE:FF",
+        {"cmd": 0x8C, "mower_pin": "1234"},
+    )
+
+    assert state.last_communication is not None
+    assert state.last_seen is None
+    assert state.available is False

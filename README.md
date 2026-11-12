@@ -1,7 +1,7 @@
 # pyGrouw
 
 Python library for local Bluetooth Low Energy communication with Grouw robotic
-mowers that use the Daye Power app protocol (`com.dayepower.dayeappleaf`).
+mowers using the DYM protocol generation.
 
 This package contains the device/protocol code intended to be used by Home
 Assistant integrations and other Python applications. It has no Home Assistant
@@ -9,8 +9,7 @@ runtime dependency.
 
 ## Status
 
-The library currently targets the DYM-era Grouw mower generation observed in
-the Daye Power APK and redacted real-hardware captures.
+The DYM path is informed by app analysis and redacted real-hardware captures.
 
 Durable protocol and reverse-engineering notes live in
 [reverse_engineered/index.md](reverse_engineered/index.md).
@@ -19,7 +18,10 @@ Supported protocol helpers:
 
 - DYM status, start/resume, pause/stop, dock, session start, and auth query
   payload encoding.
-- DYM status and auth/PIN notification parsing.
+- DYM PIN changes, mower settings, multi-area settings, and weekly work-time
+  query/write helpers with read-back verification.
+- Standard GATT Device Information reads for model, serial, firmware, hardware,
+  software, manufacturer, and System ID fields exposed by the mower.
 - APK-shaped BlueKey debug payload encoding and parsing helpers for protocol
   research.
 - Optional BLE discovery helpers that match the Home Assistant integration's
@@ -35,7 +37,8 @@ Additional protocol operations implemented in `GrouwBleMowerClient`:
 
 Not yet supported:
 
-- Cloud or Wi-Fi control.
+- Cloud control. Wi-Fi credential provisioning is local BLE configuration, not
+  a cloud client.
 - Firmware update.
 
 ## Installation For Development
@@ -66,8 +69,18 @@ client = GrouwBleMowerClient(
 mower = GrouwMower(client)
 
 state = await mower.async_update()
+state = await mower.async_update_device_information()
 await mower.async_start()
 ```
+
+Generation-specific settings are available on the lower-level client. For
+example, `GrouwBleMowerClient` exposes DYM mower settings, multi-area, and
+work-time query/write methods.
+
+`async_update_device_information()` populates the model, serial number, and
+firmware revision fields already present in `MowerState`. The lower-level
+`client.async_get_device_information()` method returns every available standard
+Device Information field.
 
 `device_provider` may be synchronous or asynchronous. It must return a
 connectable `bleak.backends.device.BLEDevice` or `None`.
